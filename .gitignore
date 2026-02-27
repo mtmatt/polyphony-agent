@@ -1,0 +1,136 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+# See https://pyinstaller.org for details
+# on avoiding having writeable numpy/scipy temporary files tracked.
+# The following ignores help to avoid "dirty" working tree status unnecessarily.
+*.manifest
+*.spec
+.nextpy/
+_nextpy/
+
+# Unit test / coverage reports
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.rpt2_cache/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Specific IDEs and editors
+.idea/  # JetBrains IDEs (e.g., PyCharm)
+.vscode/  # Visual Studio Code
+.history/
+.pylint.d/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Odoo stuff:
+.ipynb_checkpoints
+
+# Rye
+.rye/
+
+# Nix
+.direnv/
+direnv.toml
+
+# Pipenv
+# Pipfile.lock is required by pipenv to ensure reproducible builds
+# Pipfile.lock
+
+# Poetry
+# poetry.lock is required by poetry to ensure reproducible builds
+# poetry.lock
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PEP 582; used by some tools and IDEs
+__pypackages__/
+
+# Celery stuff
+celerybeat.pid
+
+# SageMath stuff
+.sage/
+
+# Ruff stuff
+.ruff_cache/
+
+# mkdocs documentation
+/site/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# Pytype
+.pytype/
+
+# Teamcity
+.teamcity/
+
+# Dotnet
+.snk/
+
+# For more recommendations, see https://github.com
+# and https://github.com
+# and https://github.com
