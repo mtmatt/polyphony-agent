@@ -8,7 +8,7 @@ class Plan(BaseModel):
     tasks: List[AgentTask]
 
 class GeminiAgent(BaseAgent):
-    def __init__(self, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, model_name: str = "gemini-3-flash-preview"):
         self.model_name = model_name
         self.context = ""
 

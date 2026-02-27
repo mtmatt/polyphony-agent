@@ -1,0 +1,18 @@
+# Polyphony Agent Configuration Example
+
+# Root section (can be placed directly or under [polyphony])
+provider = "gemini"
+model = "gemini-3-flash-preview"
+auto_commit = false
+
+# OpenAI / OpenAI-compatible configuration
+# provider = "openai"
+# model = "gpt-4o"
+# base_url = "http://localhost:11434/v1" # Example for Ollama
+# api_key = "ollama"
+
+# Or under its own section
+# [polyphony]
+# provider = "openai"
+# model = "gpt-4o"
+# auto_commit = true

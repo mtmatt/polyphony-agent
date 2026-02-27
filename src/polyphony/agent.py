@@ -26,3 +26,7 @@ class BaseAgent(ABC):
     @abstractmethod
     def receive_context(self, context: str):
         pass
+
+    @abstractmethod
+    def decompose_goal(self, goal: str) -> List[AgentTask]:
+        pass

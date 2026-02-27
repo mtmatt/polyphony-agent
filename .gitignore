@@ -134,3 +134,6 @@ dmypy.json
 # For more recommendations, see https://github.com
 # and https://github.com
 # and https://github.com
+
+#config file
+polyphony.toml

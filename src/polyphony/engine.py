@@ -8,7 +8,7 @@ from .utils import git_commit, get_repo_map, is_git_repo
 console = Console()
 
 class Orchestrator:
-    def __init__(self, planner: GeminiAgent, auto_commit: bool = True):
+    def __init__(self, planner: BaseAgent, auto_commit: bool = True):
         self.planner = planner
         self.agents: Dict[str, BaseAgent] = {}
         self.auto_commit = auto_commit
@@ -23,7 +23,16 @@ class Orchestrator:
         self.planner.receive_context(full_context)
 
         console.print(f"\n[bold blue]>>> Orchestrating goal: {goal}[/bold blue]")
-        tasks = self.planner.decompose_goal(goal)
+        
+        # We need to make sure the planner has a decompose_goal method.
+        # Since it's not in the BaseAgent interface yet, let's cast or add it.
+        # For simplicity, we'll assume the planner passed to Orchestrator has it.
+        if hasattr(self.planner, 'decompose_goal'):
+            tasks = self.planner.decompose_goal(goal)
+        else:
+            # Fallback if the agent doesn't support decomposition
+            tasks = [AgentTask(id="goal_task", description=goal, agent_type="executor")]
+        
         console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
         
         for task in tasks:
