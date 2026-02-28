@@ -15,6 +15,41 @@ class GeminiAgent(BaseAgent):
     def receive_context(self, context: str):
         self.context = context
 
+    def classify_goal(self, goal: str) -> str:
+        """
+        Calls gemini to classify a goal as 'simple' or 'complex'.
+        """
+        prompt = (
+            f"Classify the following goal as 'simple' (one-off action, direct query, or single-step task) "
+            f"or 'complex' (multi-step task, requires planning, file modifications, or research). "
+            f"Goal: '{goal}'. Output only the word 'simple' or 'complex'."
+        )
+        
+        try:
+            # Call gemini with non-interactive mode and YOLO mode
+            result = subprocess.run(
+                ["gemini", "-y", "-o", "json", "-p", prompt],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            output = result.stdout
+            start = output.find('{')
+            end = output.rfind('}') + 1
+            if start != -1 and end != -1:
+                outer_json_data = output[start:end]
+                outer_json = json.loads(outer_json_data)
+                model_response = outer_json.get('response', '').strip().lower()
+                if "complex" in model_response:
+                    return "complex"
+                return "simple"
+            else:
+                return "simple" # Default to simple on error
+
+        except Exception:
+            return "simple" # Default to simple on error
+
     def decompose_goal(self, goal: str) -> List[AgentTask]:
         """
         Calls gemini to decompose a goal into sub-tasks.
@@ -81,9 +116,9 @@ class GeminiAgent(BaseAgent):
             f"Task: {task.description}\n"
             f"Additional Context: {task.context}\n"
             f"System Context: {self.context}\n"
-            "Please perform this task. If it involves writing code or files, use the provided tools if available. "
-            "Wait, if I'm calling gemini from subprocess, I can't easily give it tool access unless I pass specific flags. "
-            "For now, we'll assume the agent will just output the result or instructions."
+            "Please perform this task. You have access to shell tools. "
+            "Use them to read, write, or modify files as needed to achieve the goal. "
+            "Output the final result or a summary of your actions."
         )
         
         try:

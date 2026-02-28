@@ -30,3 +30,11 @@ class BaseAgent(ABC):
     @abstractmethod
     def decompose_goal(self, goal: str) -> List[AgentTask]:
         pass
+
+    @abstractmethod
+    def classify_goal(self, goal: str) -> str:
+        """
+        Classifies a goal as 'simple' or 'complex'.
+        Simple goals skip the decomposition phase.
+        """
+        pass

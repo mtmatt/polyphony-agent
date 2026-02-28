@@ -2,10 +2,64 @@ import json
 from typing import List, Optional
 from pydantic import BaseModel
 from openai import OpenAI
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
 from .agent import BaseAgent, AgentTask, AgentResult
+from .utils import write_file, replace_text, run_command
+
+console = Console()
 
 class Plan(BaseModel):
     tasks: List[AgentTask]
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write or overwrite a file with given content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path to the file."},
+                    "content": {"type": "string", "description": "Complete file content."}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "replace_text",
+            "description": "Surgically replace text in a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path to the file."},
+                    "old": {"type": "string", "description": "The exact text to find."},
+                    "new": {"type": "string", "description": "The text to replace it with."}
+                },
+                "required": ["path", "old", "new"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Run a shell command and return the result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The command to run."}
+                },
+                "required": ["command"]
+            }
+        }
+    }
+]
 
 class OpenAIAgent(BaseAgent):
     def __init__(self, model_name: str = "gpt-4o", base_url: Optional[str] = None, api_key: Optional[str] = None):
@@ -15,6 +69,27 @@ class OpenAIAgent(BaseAgent):
 
     def receive_context(self, context: str):
         self.context = context
+
+    def classify_goal(self, goal: str) -> str:
+        prompt = (
+            f"Classify the following goal as 'simple' (one-off action, direct query, or single-step task) "
+            f"or 'complex' (multi-step task, requires planning, file modifications, or research). "
+            f"Goal: '{goal}'. Output only the word 'simple' or 'complex'."
+        )
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            content = response.choices[0].message.content.strip().lower()
+            if "complex" in content:
+                return "complex"
+            return "simple"
+
+        except Exception:
+            return "simple"
 
     def decompose_goal(self, goal: str) -> List[AgentTask]:
         prompt = (
@@ -48,21 +123,71 @@ class OpenAIAgent(BaseAgent):
     def execute_task(self, task: AgentTask) -> AgentResult:
         print(f"OpenAIAgent executing task: {task.description}")
         
-        prompt = (
-            f"Task: {task.description}\n"
-            f"Additional Context: {task.context}\n"
-            f"System Context: {self.context}\n"
-            "Please perform this task. Output the result clearly."
-        )
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert software engineer. System Context:\n{self.context}\n"
+                "Always verify that your actions were successful. If you write a file, you should run it or check its existence. "
+                "After you have completed all actions and verifications, provide a concise final summary of what you achieved. "
+                "Do not end with trailing thoughts about what you will do next; actually do them or finish."
+            )},
+            {"role": "user", "content": f"Task: {task.description}\nAdditional Context: {task.context}"}
+        ]
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            # Tool calling loop
+            for _ in range(5): # Max 5 tool calls per task
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto"
+                )
+                
+                message = response.choices[0].message
+                messages.append(message)
+                
+                if message.content:
+                    console.print(f"  [dim][thought][/dim] {message.content.strip()}")
+                
+                if not message.tool_calls:
+                    return AgentResult(task_id=task.id, success=True, output=message.content.strip() if message.content else "Task completed.")
+                
+                for tool_call in message.tool_calls:
+                    func_name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    
+                    # Better tool call visualization
+                    if func_name == "write_file":
+                        path = args.get("path")
+                        content = args.get("content", "")
+                        console.print(Panel(Syntax(content, "python", theme="monokai", line_numbers=True), title=f"Writing to {path}", border_style="cyan"))
+                        result = write_file(**args)
+                    elif func_name == "replace_text":
+                        path = args.get("path")
+                        old = args.get("old")
+                        new = args.get("new")
+                        console.print(Panel(f"[bold red]- {old}[/bold red]\n[bold green]+ {new}[/bold green]", title=f"Updating {path}", border_style="yellow"))
+                        result = replace_text(**args)
+                    elif func_name == "run_command":
+                        cmd = args.get("command")
+                        console.print(f"  [dim][tool][/dim] Running: [bold cyan]{cmd}[/bold cyan]")
+                        result = run_command(**args)
+                    else:
+                        result = f"Error: Unknown tool {func_name}"
+                    
+                    if "Error" in result:
+                        console.print(f"  [bold red][tool result][/bold red] {result}")
+                    else:
+                        console.print(f"  [dim][tool result][/dim] {result}")
+                    
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": func_name,
+                        "content": result
+                    })
             
-            content = response.choices[0].message.content
-            return AgentResult(task_id=task.id, success=True, output=content)
+            return AgentResult(task_id=task.id, success=True, output="Max tool calls reached.")
 
         except Exception as e:
             return AgentResult(task_id=task.id, success=False, error=str(e))

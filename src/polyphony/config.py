@@ -1,14 +1,19 @@
 import os
 import tomllib
-from typing import Optional
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 
-class Config(BaseModel):
+class AgentConfig(BaseModel):
     provider: str = Field(default="gemini")
     model: Optional[str] = None
-    base_url: Optional[str] = Field(default=None, alias="base_url")
-    api_key: Optional[str] = Field(default=None, alias="api_key")
-    auto_commit: bool = Field(default=False, alias="auto_commit")
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+
+class Config(BaseModel):
+    # Support both flat and nested structure
+    planner: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-3-flash-preview"))
+    executor: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-2.0-flash-exp"))
+    auto_commit: bool = Field(default=False)
 
 def load_config(config_path: str = "polyphony.toml") -> Config:
     """
@@ -21,9 +26,21 @@ def load_config(config_path: str = "polyphony.toml") -> Config:
     try:
         with open(config_path, "rb") as f:
             data = tomllib.load(f)
-            # Support nested [polyphony] section or flat structure
-            config_data = data.get("polyphony", data)
-            return Config(**config_data)
+            # Support nested [polyphony] section
+            root_data = data.get("polyphony", data)
+            
+            # If the user has a flat structure, we map it to planner/executor defaults
+            if "provider" in root_data and "planner" not in root_data:
+                flat_agent = {
+                    "provider": root_data.get("provider"),
+                    "model": root_data.get("model"),
+                    "base_url": root_data.get("base_url"),
+                    "api_key": root_data.get("api_key")
+                }
+                root_data["planner"] = flat_agent
+                root_data["executor"] = flat_agent
+            
+            return Config(**root_data)
     except Exception as e:
         print(f"Warning: Error loading config file {config_path}: {e}")
         return Config()
