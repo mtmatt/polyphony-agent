@@ -44,3 +44,10 @@ You can run the agent by providing a goal as a string:
 ```bash
 polyphony "Write a python script that fetches the current weather in London and saves it to a file."
 ```
+
+### Providing a Specification
+For complex tasks, you can provide an entire specification file as context:
+
+```bash
+polyphony "Implement the features described in the spec" --spec requirements.md
+```

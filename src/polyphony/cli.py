@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--executor-model", type=str, help="Model for execution.")
     
     parser.add_argument("--auto-commit", action="store_true", default=None, help="Auto-commit successful tasks.")
+    parser.add_argument("--spec", type=str, help="Path to a specification file to provide as context.")
     
     args = parser.parse_args()
     
@@ -74,8 +75,19 @@ def main():
 
     orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit)
     
+    # Load spec context if provided
+    spec_context = ""
+    if args.spec:
+        try:
+            with open(args.spec, "r") as f:
+                spec_context = f"SPECIFICATION FROM {args.spec}:\n\n{f.read()}"
+            console.print(f"[dim]Loaded spec from {args.spec}[/dim]")
+        except Exception as e:
+            console.print(f"[bold red]Error loading spec file:[/bold red] {e}")
+            sys.exit(1)
+
     try:
-        orchestrator.run_goal(args.goal)
+        orchestrator.run_goal(args.goal, context=spec_context)
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         sys.exit(1)

@@ -6,6 +6,7 @@ Polyphony is a modular AI agent framework designed for efficient task execution 
 
 ### 1. Orchestrator (`src/polyphony/engine.py`)
 The `Orchestrator` is the central brain of the system. It manages the flow of information between the user's goal and the agents.
+- **Specification Context**: It can receive a large "spec" via the `--spec` CLI flag, providing detailed requirements from the start.
 - **Goal Classification**: It first asks the planner to classify a goal as `simple` or `complex`.
 - **Lazy Context**: It generates a "Repo Map" (directory structure) only if the goal requires it (e.g., tasks involving file modifications or project structure).
 - **Task Decomposition**: For complex goals, it uses a Planner agent to break the goal into a sequence of `AgentTask` objects.
