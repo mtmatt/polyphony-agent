@@ -1,9 +1,12 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import subprocess
+import time
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 from .agent import BaseAgent, AgentTask, AgentResult
 from .gemini_agent import GeminiAgent
 from .utils import git_commit, get_repo_map, is_git_repo, should_include_repo_map
+from .run_summary import RunSummary
 
 console = Console()
 
@@ -14,6 +17,7 @@ class Orchestrator:
         self.agents: Dict[str, BaseAgent] = {}
         self.auto_commit = auto_commit
         self._cached_repo_map = None
+        self.run_summary = None
 
     def register_agent(self, name: str, agent: BaseAgent):
         self.agents[name] = agent
@@ -24,6 +28,7 @@ class Orchestrator:
         return self._cached_repo_map
 
     def run_goal(self, goal: str, context: str = ""):
+        self.run_summary = RunSummary(goal)
         console.print(f"\n[bold blue]>>> Orchestrating goal: {goal}[/bold blue]")
         
         # 1. Classify the goal
@@ -54,33 +59,55 @@ class Orchestrator:
                 tasks = [AgentTask(id="fallback_task", description=goal, agent_type="executor")]
             console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
         
-        for task in tasks:
-            self.execute_with_verification(task)
+        # 4. Multi-layered progress
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True
+        ) as progress:
+            global_task = progress.add_task("[blue]Overall Progress", total=len(tasks))
+            task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
+            
+            for task in tasks:
+                self.execute_with_verification(task, progress, global_task, task_layer)
+                progress.advance(global_task)
+        
+        # Finalize and report summary
+        summary_path = self.run_summary.save()
+        console.print(f"\n[bold green]Goal execution complete![/bold green]")
+        console.print(f"[bold cyan]Run Summary Document:[/bold cyan] {summary_path}")
 
-    def execute_with_verification(self, task: AgentTask):
+    def execute_with_verification(self, task: AgentTask, progress: Progress, global_task, task_layer):
         """
         Executes a task and verifies it using a verification command if provided.
         """
-        console.print(f"\n  [bold cyan]--- Task: {task.description} ({task.id}) ---[/bold cyan]")
+        progress.update(task_layer, completed=0, description=f"[cyan]Executing: {task.id}")
         
         # Recursive check: if the task needs more planning
         if task.agent_type == 'planner':
-            console.print(f"  [dim]Task is complex, recursing...[/dim]")
+            progress.update(task_layer, completed=50, description=f"[cyan]Recursing: {task.id}")
             self.run_goal(task.description, context=task.context or "")
+            progress.update(task_layer, completed=100)
             return
 
         while task.retry_count <= task.max_retries:
             # Step 1: Execute using the executor agent
-            result = self.executor.execute_task(task)
+            progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking: {task.id}")
+            result = self.executor.execute_task(task, progress=lambda p: progress.update(task_layer, completed=p))
+            progress.update(task_layer, completed=50, description=f"[cyan]Executing: {task.id}")
             
             if not result.success:
-                console.print(f"  [bold red]Execution Error:[/bold red] {result.error}")
                 task.retry_count += 1
+                self.run_summary.add_result(task, result)
                 continue
             
             # Step 2: Verify
             if task.verification_command:
-                console.print(f"  [dim]Verifying with: {task.verification_command}[/dim]")
+                progress.update(task_layer, completed=75, description=f"[cyan]Verifying: {task.id}")
                 verify_result = subprocess.run(
                     task.verification_command,
                     shell=True,
@@ -88,29 +115,32 @@ class Orchestrator:
                     text=True
                 )
                 
+                result.verification_output = f"Command: {task.verification_command}\nStdout:\n{verify_result.stdout}\nStderr:\n{verify_result.stderr}"
+                
                 if verify_result.returncode == 0:
-                    console.print(f"  [bold green]Verification successful![/bold green]")
                     # Step 3: Git Commit (Optional)
                     if self.auto_commit and is_git_repo():
+                        progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                         commit_msg = f"Task {task.id}: {task.description}"
-                        commit_res = git_commit(commit_msg)
-                        console.print(f"  [dim]{commit_res}[/dim]")
+                        git_commit(commit_msg)
+                    
+                    self.run_summary.add_result(task, result)
+                    progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
                     return
                 else:
-                    console.print(f"  [bold yellow]Verification failed (Attempt {task.retry_count+1}/{task.max_retries+1}):[/bold yellow]")
-                    console.print(f"  [dim]{verify_result.stdout}\n{verify_result.stderr}[/dim]")
                     task.retry_count += 1
-                    # Pass the error back to the task context for the next attempt
                     error_msg = verify_result.stderr or verify_result.stdout
                     task.context = f"{task.context or ''}\nPrevious attempt failed with error:\n{error_msg}"
+                    self.run_summary.add_result(task, result)
             else:
                 # No verification command, assume success if execution was successful
-                if result.output and result.output != "Task completed.":
-                    console.print(f"  [green]Result:[/green] {result.output}")
                 if self.auto_commit and is_git_repo():
+                    progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                     commit_msg = f"Task {task.id}: {task.description}"
-                    commit_res = git_commit(commit_msg)
-                    console.print(f"  [dim]{commit_res}[/dim]")
+                    git_commit(commit_msg)
+                
+                self.run_summary.add_result(task, result)
+                progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
                 return
 
-        console.print(f"  [bold red]Task failed after {task.max_retries + 1} attempts.[/bold red]")
+        progress.update(task_layer, completed=100, description=f"[bold red]Failed: {task.id}")

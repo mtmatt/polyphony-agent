@@ -50,7 +50,7 @@ def save_tasks(task_list: TaskList) -> None:
         task_list.save_to_file(TASKS_FILE)
     except Exception as e:
         console.print(f"[red]Error saving tasks: {e}[/]")
-        raise e
+        sys.exit(1)
 
 
 def handle_add(args, task_list: TaskList):

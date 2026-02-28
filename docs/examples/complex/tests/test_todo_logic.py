@@ -1,8 +1,11 @@
 import pytest
 import os
 import json
+import tempfile
+import shutil
 from pathlib import Path
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 from pydantic import ValidationError
 from todo_cli import Task, TaskList, load_tasks, save_tasks, TASKS_FILE
 
@@ -422,3 +425,73 @@ def test_new_tasks_receive_timestamp_and_unique_id():
     
     # Ensure they are distinct
     assert t1.id != t2.id
+
+def test_save_to_file_atomic_behavior(tmp_path):
+    """
+    Verify that save_to_file follows the atomic save protocol:
+    1. Create a temporary file in the same directory.
+    2. Write JSON data.
+    3. Flush and fsync.
+    4. Atomic replace.
+    5. Cleanup on failure.
+    """
+    target_path = tmp_path / "tasks.json"
+    tl = TaskList()
+    tl.add_task("Test task")
+    
+    # We want to track calls to important functions
+    with (
+        patch("tempfile.NamedTemporaryFile", wraps=tempfile.NamedTemporaryFile) as mock_ntf,
+        patch("os.fsync") as mock_fsync,
+        patch("os.replace") as mock_replace,
+        patch("shutil.copymode") as mock_copymode
+    ):
+        tl.save_to_file(target_path)
+        
+        # 1. Verify NamedTemporaryFile was called with correct directory
+        mock_ntf.assert_called_once()
+        args, kwargs = mock_ntf.call_args
+        assert kwargs["dir"] == target_path.parent
+        assert kwargs["delete"] is False
+        
+        # 3. Verify fsync was called
+        mock_fsync.assert_called_once()
+        
+        # 4. Verify replace was called with (temp, target)
+        mock_replace.assert_called_once()
+        temp_arg, target_arg = mock_replace.call_args[0]
+        assert str(target_arg) == str(target_path)
+        
+def test_save_to_file_cleanup_on_failure(tmp_path):
+    """Verify that the temporary file is cleaned up if a failure occurs before replace."""
+    target_path = tmp_path / "tasks.json"
+    tl = TaskList()
+    tl.add_task("Test task")
+    
+    # Mocking os.fsync to raise an exception
+    with (
+        patch("os.fsync", side_effect=Exception("Disk full")),
+        patch("os.replace") as mock_replace
+    ):
+        # We need to capture the temp file path to check if it's deleted
+        temp_file_path = None
+        
+        original_ntf = tempfile.NamedTemporaryFile
+        def side_effect(*args, **kwargs):
+            nonlocal temp_file_path
+            f = original_ntf(*args, **kwargs)
+            temp_file_path = f.name
+            return f
+            
+        with patch("tempfile.NamedTemporaryFile", side_effect=side_effect):
+            try:
+                tl.save_to_file(target_path)
+            except Exception as e:
+                assert str(e) == "Disk full"
+        
+        # Verify replace was NEVER called
+        mock_replace.assert_not_called()
+        
+        # Verify temp file was cleaned up
+        assert temp_file_path is not None
+        assert not os.path.exists(temp_file_path)

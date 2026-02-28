@@ -105,7 +105,7 @@ class GeminiAgent(BaseAgent):
             print(f"Error decomposing goal: {e}")
             return []
 
-    def execute_task(self, task: AgentTask) -> AgentResult:
+    def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         """
         Calls gemini to perform a specific task.
         """

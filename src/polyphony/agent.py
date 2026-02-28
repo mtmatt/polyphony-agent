@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 class AgentTask(BaseModel):
     id: str
@@ -12,15 +12,22 @@ class AgentTask(BaseModel):
     retry_count: int = 0
     max_retries: int = 2
 
+class AgentAction(BaseModel):
+    action_type: str  # thought, tool_call, tool_result
+    content: str
+    metadata: Optional[Dict[str, Any]] = None
+
 class AgentResult(BaseModel):
     task_id: str
     success: bool
     output: Optional[str] = None
     error: Optional[str] = None
+    history: List[AgentAction] = []
+    verification_output: Optional[str] = None
 
 class BaseAgent(ABC):
     @abstractmethod
-    def execute_task(self, task: AgentTask) -> AgentResult:
+    def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         pass
 
     @abstractmethod
@@ -38,3 +45,7 @@ class BaseAgent(ABC):
         Simple goals skip the decomposition phase.
         """
         pass
+
+AgentTask.model_rebuild()
+AgentAction.model_rebuild()
+AgentResult.model_rebuild()

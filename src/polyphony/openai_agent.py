@@ -120,12 +120,16 @@ class OpenAIAgent(BaseAgent):
             print(f"Error decomposing goal with OpenAI: {e}")
             return []
 
-    def execute_task(self, task: AgentTask) -> AgentResult:
-        print(f"OpenAIAgent executing task: {task.description}")
+    def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
+        history: List[AgentAction] = []
         
+        def update_progress(p: int):
+            if progress and callable(progress):
+                progress(p)
+
         messages = [
             {"role": "system", "content": (
-                "You are an expert software engineer. System Context:\n{self.context}\n"
+                f"You are an expert software engineer. System Context:\n{self.context}\n"
                 "Always verify that your actions were successful. If you write a file, you should run it or check its existence. "
                 "After you have completed all actions and verifications, provide a concise final summary of what you achieved. "
                 "Do not end with trailing thoughts about what you will do next; actually do them or finish."
@@ -135,7 +139,9 @@ class OpenAIAgent(BaseAgent):
         
         try:
             # Tool calling loop
-            for _ in range(5): # Max 5 tool calls per task
+            for i in range(5): # Max 5 tool calls per task
+                update_progress(10 + i*15) # Progress through steps
+                
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
@@ -147,14 +153,24 @@ class OpenAIAgent(BaseAgent):
                 messages.append(message)
                 
                 if message.content:
-                    console.print(f"  [dim][thought][/dim] {message.content.strip()}")
+                    thought = message.content.strip()
+                    history.append(AgentAction(action_type="thought", content=thought))
+                    console.print(f"  [dim][thought][/dim] {thought}")
                 
                 if not message.tool_calls:
-                    return AgentResult(task_id=task.id, success=True, output=message.content.strip() if message.content else "Task completed.")
+                    update_progress(100)
+                    return AgentResult(
+                        task_id=task.id, 
+                        success=True, 
+                        output=message.content.strip() if message.content else "Task completed.",
+                        history=history
+                    )
                 
                 for tool_call in message.tool_calls:
                     func_name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments)
+                    
+                    history.append(AgentAction(action_type="tool_call", content=func_name, metadata=args))
                     
                     # Better tool call visualization
                     if func_name == "write_file":
@@ -175,6 +191,8 @@ class OpenAIAgent(BaseAgent):
                     else:
                         result = f"Error: Unknown tool {func_name}"
                     
+                    history.append(AgentAction(action_type="tool_result", content=result))
+                    
                     if "Error" in result:
                         console.print(f"  [bold red][tool result][/bold red] {result}")
                     else:
@@ -187,7 +205,9 @@ class OpenAIAgent(BaseAgent):
                         "content": result
                     })
             
-            return AgentResult(task_id=task.id, success=True, output="Max tool calls reached.")
+            update_progress(100)
+            return AgentResult(task_id=task.id, success=True, output="Max tool calls reached.", history=history)
 
         except Exception as e:
-            return AgentResult(task_id=task.id, success=False, error=str(e))
+            update_progress(100)
+            return AgentResult(task_id=task.id, success=False, error=str(e), history=history)
