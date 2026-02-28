@@ -1,0 +1,58 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "description": "Finish the security audit report",
+      "completed": true,
+      "metadata": {
+        "created_at": "2026-02-28T05:55:01.741236Z",
+        "tags": [
+          "work",
+          "security"
+        ],
+        "priority": "high",
+        "extra": {}
+      }
+    },
+    {
+      "id": 2,
+      "description": "Buy bread",
+      "completed": false,
+      "metadata": {
+        "created_at": "2026-02-28T05:56:19.358186Z",
+        "tags": [
+          "shopping",
+          "grocery"
+        ],
+        "priority": "high",
+        "extra": {}
+      }
+    },
+    {
+      "id": 3,
+      "description": "Go to the gym",
+      "completed": false,
+      "metadata": {
+        "created_at": "2026-02-28T05:57:04.039865Z",
+        "tags": [],
+        "priority": "medium",
+        "extra": {}
+      }
+    },
+    {
+      "id": 4,
+      "description": "Buy milk",
+      "completed": false,
+      "metadata": {
+        "created_at": "2026-02-28T05:57:46.205697Z",
+        "tags": [
+          "shopping",
+          "home"
+        ],
+        "priority": "high",
+        "extra": {}
+      }
+    }
+  ],
+  "last_id": 4
+}
