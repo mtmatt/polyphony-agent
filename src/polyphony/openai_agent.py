@@ -1,11 +1,11 @@
 import json
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from .agent import BaseAgent, AgentTask, AgentResult
+from .agent import BaseAgent, AgentTask, AgentResult, AgentAction
 from .utils import write_file, replace_text, run_command
 
 console = Console()

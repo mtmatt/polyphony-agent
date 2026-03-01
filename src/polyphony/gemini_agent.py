@@ -1,6 +1,6 @@
 import subprocess
 import json
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 from .agent import BaseAgent, AgentTask, AgentResult
 
