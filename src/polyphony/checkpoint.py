@@ -23,12 +23,21 @@ class RunCheckpoint(BaseModel):
         os.makedirs(directory, exist_ok=True)
         filename = f"checkpoint-{self.run_id}.json"
         path = os.path.join(directory, filename)
+        temp_path = f"{path}.tmp"
         
         # Update last_updated before saving
         self.last_updated = datetime.now()
         
-        with open(path, "w") as f:
-            f.write(self.model_dump_json(indent=2))
+        try:
+            with open(temp_path, "w") as f:
+                f.write(self.model_dump_json(indent=2))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise e
         return path
 
     @classmethod

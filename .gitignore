@@ -141,3 +141,4 @@ polyphony.toml
 # Polyphony run logs
 logs/
 polyphony-run-*.md
+.polyphony/

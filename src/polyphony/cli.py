@@ -49,6 +49,7 @@ def main():
     
     parser.add_argument("--auto-commit", action="store_true", default=None, help="Auto-commit successful tasks.")
     parser.add_argument("--budget-limit", type=float, help="Maximum budget in USD.")
+    parser.add_argument("--max-duration", type=int, default=7200, help="Maximum run duration in seconds (default 2 hours = 7200s)")
     parser.add_argument("--spec", type=str, help="Path to a specification file to provide as context.")
     parser.add_argument("--run-id", type=str, help="Run ID to resume.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest run.")
@@ -111,12 +112,13 @@ def main():
 
     auto_commit = args.auto_commit if args.auto_commit is not None else config.auto_commit
     budget_limit = args.budget_limit if args.budget_limit is not None else config.budget_limit
+    max_run_duration = getattr(args, 'max_duration', None) or 7200  # Default 2 hours
 
     # Create Agents
     planner = create_agent(planner_config, mcp_servers=config.mcp_servers)
     executor = create_agent(executor_config, mcp_servers=config.mcp_servers)
 
-    orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit, budget_limit=budget_limit, run_id=run_id)
+    orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit, budget_limit=budget_limit, run_id=run_id, max_run_duration=max_run_duration)
     
     # Load spec context if provided
     spec_context = ""

@@ -34,7 +34,18 @@
 5.  **MCP Support Integration** - COMPLETED
 6.  **Dynamic Model Switching** - COMPLETED
 7.  **Cost Tracking & Budget Management** - COMPLETED
-8.  **Checkpointing & Resume** - COMPLETED
+8.  **Checkpointing & Resume** - COMPLETED (Atomic saves, recursive task support)
+9.  **Enhanced Error Recovery** - COMPLETED (Categorized handlers, model fallback, robust parallel execution)
+10. **Extended Session Duration (2-Hour Passes)** - COMPLETED
+
+### Session Management Features
+
+The system now supports extended execution sessions with configurable duration limits:
+
+- **Default Duration:** 2 hours (7200 seconds) per session
+- **Configurable via CLI:** Use `--max-duration <seconds>` flag
+- **Configurable via Config:** Set `max_run_duration` in `polyphony.toml`
+- **Duration Monitoring:** Warnings at 80% consumed, graceful termination at limit
 
 # Potential Improvements
 
@@ -45,12 +56,7 @@
     *   Live progress indicators for long-running operations
     *   WebSocket or SSE support for web-based monitoring
 
-2.  **Enhanced Error Recovery**
-    *   Categorized error handlers for different failure types
-    *   Automatic fallback strategies (e.g., switch to simpler models)
-    *   Context-aware retry with modified approaches
-
-3.  **Test Generation**
+2.  **Test Generation**
     *   Automatic generation of unit tests for created code
     *   Property-based testing suggestions
     *   Coverage analysis and gap identification
@@ -136,98 +142,3 @@
 2.  **Predictive Context Loading:** Pre-fetching repository maps and documentation for files identified in the planning phase before they are explicitly requested by execution agents.
 3.  **Collaborative Multi-Agent Planning:** Utilizing different specialized agent roles (e.g., Security Architect, Senior Dev, QA Specialist) during the `enter_plan_mode` phase for high-stakes features.
 4.  **Hardware-Accelerated Tooling:** Integration with local inference servers for sub-millisecond classification and simple task evaluation.
-
-
-# Recent Runs
-
-### Run: original goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.003142
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 2/2
-
-**Completed Tasks:**
-- t1
-- t2
-
-### Run: original goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.003205
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 2/2
-
-**Completed Tasks:**
-- t1
-- t2
-
-### Run: original goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.003514
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 2/2
-
-**Completed Tasks:**
-- t1
-- t2
-
-### Run: Improve your self.
-
-- **Date:** 2026-03-01
-- **Duration:** 0:12:03.533411
-- **Status:** [SUCCESS]
-- **Tasks Completed:** 3/3
-
-**Completed Tasks:**
-- Research token usage extraction for Gemini and OpenAI, create a CostTracker module using Pydantic, and update agent implementations to report usage after each step.
-- Add budget configuration to the config system and implement enforcement logic in the Engine to warn or halt when limits are reached.
-- Create comprehensive unit tests for the cost tracking system and update GEMINI.md to mark the feature as completed.
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.001793
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.002394
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.000940
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.002350
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal

@@ -22,6 +22,7 @@ class Config(BaseModel):
     mcp_servers: List[MCPServerConfig] = Field(default_factory=list)
     auto_commit: bool = Field(default=False)
     budget_limit: float = Field(default=0.0)
+    max_run_duration: int = Field(default=7200)  # Default 2 hours
 
 def load_config(config_path: str = "polyphony.toml") -> Config:
     """

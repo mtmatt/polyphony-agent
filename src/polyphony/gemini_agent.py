@@ -156,7 +156,7 @@ class GeminiAgent(BaseAgent):
 
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         """
-        Calls gemini to perform a specific task.
+        Calls gemini to perform a specific task, capturing history from stream-json.
         """
         print(f"GeminiAgent executing task: {task.description}")
         
@@ -170,28 +170,79 @@ class GeminiAgent(BaseAgent):
             "Output the final result or a summary of your actions."
         )
         
+        history: List[AgentAction] = []
+        full_response = []
+        
         try:
-            # Call gemini with non-interactive mode, json output format, and YOLO mode
-            result = subprocess.run(
-                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
-                capture_output=True,
-                text=True,
-                check=True
+            # Call gemini with stream-json output format
+            process = subprocess.Popen(
+                ["gemini", "--model", self.model_name, "-y", "-o", "stream-json", "-p", prompt],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
             
-            output = result.stdout
-            outer_json = extract_json(output)
-            if outer_json:
-                model_response = outer_json.get('response', '')
-                usage = self._extract_usage(outer_json)
-                return AgentResult(task_id=task.id, success=True, output=model_response, usage=usage)
+            total_usage = TokenUsage()
+            
+            # Read stdout line by line
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                try:
+                    data = json.loads(line)
+                    msg_type = data.get("type")
+                    
+                    if msg_type == "message":
+                        content = data.get("content", "")
+                        role = data.get("role")
+                        if role == "assistant":
+                            full_response.append(content)
+                            history.append(AgentAction(action_type="thought", content=content))
+                    elif msg_type == "tool_use":
+                        history.append(AgentAction(
+                            action_type="tool_call", 
+                            content=data.get("tool_name", ""),
+                            metadata=data.get("parameters")
+                        ))
+                    elif msg_type == "tool_result":
+                        history.append(AgentAction(
+                            action_type="tool_result",
+                            content=data.get("output", "")
+                        ))
+                    elif msg_type == "result":
+                        stats = data.get("stats", {})
+                        total_usage.prompt_tokens = stats.get("input_tokens", 0)
+                        total_usage.completion_tokens = stats.get("output_tokens", 0)
+                        total_usage.total_tokens = stats.get("total_tokens", 0)
+                except json.JSONDecodeError:
+                    continue
+            
+            process.wait()
+            
+            if process.returncode == 0:
+                # Update usage
+                if self.model_name not in self.usage_by_model:
+                    self.usage_by_model[self.model_name] = TokenUsage()
+                
+                self.usage_by_model[self.model_name].prompt_tokens += total_usage.prompt_tokens
+                self.usage_by_model[self.model_name].completion_tokens += total_usage.completion_tokens
+                self.usage_by_model[self.model_name].total_tokens += total_usage.total_tokens
+                
+                return AgentResult(
+                    task_id=task.id, 
+                    success=True, 
+                    output="".join(full_response), 
+                    usage=total_usage,
+                    history=history
+                )
             else:
-                return AgentResult(task_id=task.id, success=False, error="No JSON found in gemini output")
+                stderr = process.stderr.read()
+                return AgentResult(task_id=task.id, success=False, error=stderr, history=history)
 
-        except subprocess.CalledProcessError as e:
-            return AgentResult(task_id=task.id, success=False, error=str(e.stderr))
         except Exception as e:
-            return AgentResult(task_id=task.id, success=False, error=str(e))
+            return AgentResult(task_id=task.id, success=False, error=str(e), history=history)
 
     def generate_commit_message(self, result: AgentResult) -> str:
         """
