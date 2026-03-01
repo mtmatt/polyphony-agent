@@ -28,7 +28,7 @@ class GeminiAgent(BaseAgent):
         try:
             # Call gemini with non-interactive mode and YOLO mode
             result = subprocess.run(
-                ["gemini", "-y", "-o", "json", "-p", prompt],
+                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
                 capture_output=True,
                 text=True,
                 check=True
@@ -59,16 +59,18 @@ class GeminiAgent(BaseAgent):
             f"Current context: '{self.context}'. "
             "Output the tasks in a JSON format matching this structure: "
             "{\"tasks\": [{\"id\": \"task1\", \"description\": \"...\", \"context\": \"...\", \"agent_type\": \"...\", \"verification_command\": \"...\"}]}. "
-            "agent_type should be 'planner' if the task is complex and needs its own sub-tasks, or 'executor' if it's a direct action. "
+            "agent_type should be 'planner' if the task is highly complex and requires its own structured sub-tasks, "
+            "or 'executor' if it's a specific action or a complex task that a single agent can handle with multiple tool calls. "
             "verification_command should be a shell command (e.g., 'pytest', 'python my_script.py', 'ls -R') that can be run to verify the task's success. "
-            "Be aggressive in using 'planner' for any task that has multiple steps. "
+            "Be conservative in using 'planner' – only use it for very large goals that genuinely need hierarchy. "
+            "Prefer 'executor' for most technical tasks as the executor is already capable of multi-step tool use. "
             "Only output the JSON object, nothing else."
         )
         
         try:
             # Call gemini with non-interactive mode, json output format, and YOLO mode
             result = subprocess.run(
-                ["gemini", "-y", "-o", "json", "-p", prompt],
+                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
                 capture_output=True,
                 text=True,
                 check=True
@@ -124,7 +126,7 @@ class GeminiAgent(BaseAgent):
         try:
             # Call gemini with non-interactive mode, json output format, and YOLO mode
             result = subprocess.run(
-                ["gemini", "-y", "-o", "json", "-p", prompt],
+                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
                 capture_output=True,
                 text=True,
                 check=True
@@ -145,3 +147,37 @@ class GeminiAgent(BaseAgent):
             return AgentResult(task_id=task.id, success=False, error=str(e.stderr))
         except Exception as e:
             return AgentResult(task_id=task.id, success=False, error=str(e))
+
+    def generate_commit_message(self, result: AgentResult) -> str:
+        """
+        Calls gemini to generate a descriptive commit message based on the task result.
+        """
+        prompt = (
+            f"Generate a concise, descriptive Git commit message for the following task output.\n"
+            f"Task Output: {result.output}\n"
+            f"Verification Output: {result.verification_output}\n"
+            "Output only the commit message, nothing else."
+        )
+        
+        try:
+            # Call gemini with non-interactive mode, json output format, and YOLO mode
+            sub_result = subprocess.run(
+                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            output = sub_result.stdout
+            start = output.find('{')
+            end = output.rfind('}') + 1
+            if start != -1 and end != -1:
+                outer_json_data = output[start:end]
+                outer_json = json.loads(outer_json_data)
+                model_response = outer_json.get('response', '').strip()
+                return model_response
+            else:
+                return super().generate_commit_message(result)
+
+        except Exception:
+            return super().generate_commit_message(result)

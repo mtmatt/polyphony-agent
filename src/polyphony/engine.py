@@ -14,7 +14,10 @@ class Orchestrator:
     def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, auto_commit: bool = True):
         self.planner = planner
         self.executor = executor or planner
-        self.agents: Dict[str, BaseAgent] = {}
+        self.agents: Dict[str, BaseAgent] = {
+            "planner": self.planner,
+            "executor": self.executor
+        }
         self.auto_commit = auto_commit
         self._cached_repo_map = None
         self.run_summary = None
@@ -45,8 +48,8 @@ class Orchestrator:
             full_context = f"{full_context}\nProject Structure:\n{repo_map}"
             console.print(f"[dim]Included repo map in context.[/dim]")
         
-        self.planner.receive_context(full_context)
-        self.executor.receive_context(full_context)
+        for agent in self.agents.values():
+            agent.receive_context(full_context)
 
         # 3. Plan or Direct Execution
         if is_simple:
@@ -94,15 +97,21 @@ class Orchestrator:
             progress.update(task_layer, completed=100)
             return
 
+        # Multi-model support: select agent based on task.agent_type
+        agent = self.agents.get(task.agent_type, self.executor)
+
         while task.retry_count <= task.max_retries:
-            # Step 1: Execute using the executor agent
+            # Step 1: Execute using the selected agent
             progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking: {task.id}")
-            result = self.executor.execute_task(task, progress=lambda p: progress.update(task_layer, completed=p))
+            result = agent.execute_task(task, progress=lambda p: progress.update(task_layer, completed=p))
+            result.agent_model = getattr(agent, "model_name", "unknown")
             progress.update(task_layer, completed=50, description=f"[cyan]Executing: {task.id}")
             
             if not result.success:
                 task.retry_count += 1
                 self.run_summary.add_result(task, result)
+                # Smarter context update for retry
+                task.context = f"{task.context or ''}\nPrevious attempt failed with error: {result.error}"
                 continue
             
             # Step 2: Verify
@@ -121,8 +130,10 @@ class Orchestrator:
                     # Step 3: Git Commit (Optional)
                     if self.auto_commit and is_git_repo():
                         progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                        commit_msg = f"Task {task.id}: {task.description}"
-                        git_commit(commit_msg)
+                        commit_msg = agent.generate_commit_message(result)
+                        git_res = git_commit(commit_msg)
+                        if git_res:
+                            console.print(f"  [dim][git][/dim] {git_res}")
                     
                     self.run_summary.add_result(task, result)
                     progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
@@ -130,14 +141,16 @@ class Orchestrator:
                 else:
                     task.retry_count += 1
                     error_msg = verify_result.stderr or verify_result.stdout
-                    task.context = f"{task.context or ''}\nPrevious attempt failed with error:\n{error_msg}"
+                    task.context = f"{task.context or ''}\nPrevious attempt failed verification with error:\n{error_msg}"
                     self.run_summary.add_result(task, result)
             else:
                 # No verification command, assume success if execution was successful
                 if self.auto_commit and is_git_repo():
                     progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                    commit_msg = f"Task {task.id}: {task.description}"
-                    git_commit(commit_msg)
+                    commit_msg = agent.generate_commit_message(result)
+                    git_res = git_commit(commit_msg)
+                    if git_res:
+                        console.print(f"  [dim][git][/dim] {git_res}")
                 
                 self.run_summary.add_result(task, result)
                 progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")

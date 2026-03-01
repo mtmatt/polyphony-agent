@@ -20,17 +20,17 @@ def git_commit(message: str, path: str = ".") -> Optional[str]:
     """
     try:
         # Stage all changes
-        subprocess.run(["git", "add", "."], cwd=path, check=True)
+        subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True, text=True)
         # Check if there are changes to commit
         status = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True, check=True)
         if not status.stdout.strip():
             return "No changes to commit."
         
         # Commit
-        subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True, text=True)
         return f"Committed: {message}"
     except subprocess.CalledProcessError as e:
-        return f"Git error: {e.stderr}"
+        return f"Git error: {e.stderr or e.stdout or str(e)}"
     except Exception as e:
         return f"Error during git commit: {e}"
 
@@ -79,7 +79,7 @@ def run_command(command: str) -> str:
     Runs a shell command and returns output.
     """
     try:
-        result = subprocess.run(command.split(), capture_output=True, text=True)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             return f"Output:\n{result.stdout}"
         else:
@@ -87,19 +87,48 @@ def run_command(command: str) -> str:
     except Exception as e:
         return f"Error running command: {e}"
 
+import re
+
 def get_repo_map(path: str = ".") -> str:
     """
-    Returns a simple string representation of the project structure.
+    Returns a string representation of the project structure, including key symbols for Python files.
     """
+    repo_map = []
     try:
-        # Use 'find' or similar to get a file list, excluding some common directories
-        result = subprocess.run(
-            ["find", ".", "-maxdepth", "3", "-not", "-path", "*/.*"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return result.stdout
+        for root, dirs, files in os.walk(path):
+            # Exclude hidden directories and __pycache__
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
+            
+            level = root.replace(path, '').count(os.sep)
+            indent = ' ' * 4 * level
+            repo_map.append(f"{indent}{os.path.basename(root)}/")
+            
+            sub_indent = ' ' * 4 * (level + 1)
+            for f in files:
+                if f.startswith('.') or f.endswith('.pyc'):
+                    continue
+                
+                file_path = os.path.join(root, f)
+                repo_map.append(f"{sub_indent}{f}")
+                
+                # If it's a Python file, extract symbols
+                if f.endswith('.py'):
+                    try:
+                        with open(file_path, 'r') as file_content:
+                            content = file_content.read()
+                            # Find classes and functions
+                            classes = re.findall(r'^class\s+([a-zA-Z_][a-zA-Z0-9_]*)', content, re.MULTILINE)
+                            functions = re.findall(r'^def\s+([a-zA-Z_][a-zA-Z0-9_]*)', content, re.MULTILINE)
+                            
+                            if classes or functions:
+                                symbol_indent = ' ' * 4 * (level + 2)
+                                if classes:
+                                    repo_map.append(f"{symbol_indent}Classes: {', '.join(classes)}")
+                                if functions:
+                                    repo_map.append(f"{symbol_indent}Functions: {', '.join(functions)}")
+                    except Exception:
+                        pass # Skip if file cannot be read
+        
+        return "\n".join(repo_map)
     except Exception as e:
         return f"Error generating repo map: {e}"

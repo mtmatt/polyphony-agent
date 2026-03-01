@@ -21,3 +21,21 @@
     *   Requirement: Configurable models for different stages (Planning vs. Execution).
 5.  **MCP (Model Context Protocol) Support (Future):**
     *   Requirement: Ability to plug into local tools via MCP servers.
+
+# Implementation Roadmap (Prioritized)
+
+1.  **High: Enhanced Git-Native Integration**
+    *   Goal: Parity between `OpenAIAgent` and `GeminiAgent` for descriptive commit messages.
+    *   Task: Implement `generate_commit_message` in `OpenAIAgent`.
+2.  **High: Smarter Plan-Act-Verify Loop**
+    *   Goal: Move beyond simple retries to "Reflection-based" error correction.
+    *   Task: Update `Orchestrator` to provide agents with a dedicated reflection prompt on verification failure.
+3.  **Medium: Intelligent Repository Mapping**
+    *   Goal: Scoped and accurate repo maps for large projects.
+    *   Task: Optimize `utils.get_repo_map` using `ast` and implement task-based directory filtering.
+4.  **Medium: MCP Support Integration**
+    *   Goal: Dynamic tool discovery and invocation via MCP servers.
+    *   Task: Define `MCPServerConfig` in `config.py` and implement an `MCPClient` integrated into `OpenAIAgent`'s tool loop.
+5.  **Low: Dynamic Model Switching**
+    *   Goal: Optimize cost/latency by selecting models based on task complexity.
+    *   Task: Implement automated model selection in `Orchestrator` for simple vs. complex goals.

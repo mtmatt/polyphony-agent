@@ -20,6 +20,7 @@ class AgentAction(BaseModel):
 class AgentResult(BaseModel):
     task_id: str
     success: bool
+    agent_model: Optional[str] = None
     output: Optional[str] = None
     error: Optional[str] = None
     history: List[AgentAction] = []
@@ -45,6 +46,13 @@ class BaseAgent(ABC):
         Simple goals skip the decomposition phase.
         """
         pass
+
+    def generate_commit_message(self, result: AgentResult) -> str:
+        """
+        Generates a descriptive commit message based on the task result.
+        Default implementation returns a simple message.
+        """
+        return f"Task {result.task_id} completed"
 
 AgentTask.model_rebuild()
 AgentAction.model_rebuild()

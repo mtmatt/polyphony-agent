@@ -211,3 +211,26 @@ class OpenAIAgent(BaseAgent):
         except Exception as e:
             update_progress(100)
             return AgentResult(task_id=task.id, success=False, error=str(e), history=history)
+
+    def generate_commit_message(self, result: AgentResult) -> str:
+        """
+        Calls OpenAI to generate a descriptive commit message based on the task result.
+        """
+        prompt = (
+            f"Generate a concise, descriptive Git commit message for the following task output.\n"
+            f"Task Output: {result.output}\n"
+            f"Verification Output: {result.verification_output}\n"
+            "Output only the commit message, nothing else."
+        )
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            content = response.choices[0].message.content.strip()
+            return content
+
+        except Exception:
+            return super().generate_commit_message(result)

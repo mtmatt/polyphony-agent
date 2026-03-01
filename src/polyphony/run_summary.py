@@ -39,6 +39,8 @@ class RunSummary:
             status_emoji = "✅" if result.success else "❌"
             md += f"### {i+1}. {task.description} ({task.id}) {status_emoji}\n\n"
             
+            md += f"**Agent Model:** `{result.agent_model or 'unknown'}`\n\n"
+            
             if result.error:
                 md += f"**Error:** {result.error}\n\n"
             
@@ -66,7 +68,10 @@ class RunSummary:
     def save(self, directory: str = "."):
         self.finalize()
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        slug = self.goal.lower().replace(" ", "-")[:30]
+        import re
+        # Sanitize slug: keep only alphanumeric and hyphens, replace others with hyphens
+        slug = re.sub(r'[^a-z0-9\-]', '-', self.goal.lower())
+        slug = re.sub(r'-+', '-', slug).strip('-')[:30]
         filename = f"polyphony-run-{slug}-{timestamp}.md"
         path = os.path.join(directory, filename)
         
