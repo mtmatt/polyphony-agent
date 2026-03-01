@@ -9,6 +9,14 @@ A recursive agent structure that uses `gemini` (Gemini CLI) as a planner to deco
 3.  **Recursive Execution:** An orchestrator that manages the recursive decomposition and execution of tasks.
 4.  **CLI Wrapper:** Python interface for interacting with the agent system.
 
+## Key Features
+
+- **Git-Native Integration:** Auto-commit after successful task execution with AI-generated commit messages (supports both OpenAI and Gemini agents).
+- **Plan-Act-Verify Loop:** Decomposed tasks include verification steps with reflection-based error correction on failures.
+- **Repository Awareness:** Automatic repo mapping with AST-based symbol extraction and task-based directory filtering.
+- **Multi-Model Support:** Configurable models for different stages (Planning vs. Execution) with automatic model selection based on task complexity.
+- **MCP Support:** Pluggable Model Context Protocol servers for dynamic tool discovery and invocation.
+
 ## Directory Structure
 
 ```text
@@ -19,8 +27,12 @@ polyphony-agent/
 │       ├── __init__.py
 │       ├── agent.py        # Base Agent and Task models
 │       ├── gemini_agent.py # Gemini-powered planning and execution
+│       ├── openai_agent.py # OpenAI-powered planning and execution
 │       ├── engine.py       # Orchestration and recursive logic
-│       └── cli.py          # CLI entry point
+│       ├── config.py       # Configuration with MCP support
+│       ├── mcp_client.py   # MCP client integration
+│       ├── cli.py          # CLI entry point
+│       └── utils.py        # Utilities including repo mapping
 └── tests/                  # Test suite
 ```
 

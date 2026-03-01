@@ -4,13 +4,34 @@ from typing import List, Optional, Any
 from pydantic import BaseModel
 from .agent import BaseAgent, AgentTask, AgentResult
 
+from .config import MCPServerConfig
+
 class Plan(BaseModel):
     tasks: List[AgentTask]
 
 class GeminiAgent(BaseAgent):
-    def __init__(self, model_name: str = "gemini-3-flash-preview"):
-        self.model_name = model_name
+    def __init__(self, model_name: str = "gemini-3-flash-preview", flash_model_name: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
+        self._model_name = model_name
+        self._pro_model_name = model_name
+        self._flash_model_name = flash_model_name
         self.context = ""
+        self.mcp_servers = mcp_servers or []
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str):
+        self._model_name = value
+
+    @property
+    def pro_model_name(self) -> str:
+        return self._pro_model_name
+
+    @property
+    def flash_model_name(self) -> Optional[str]:
+        return self._flash_model_name
 
     def receive_context(self, context: str):
         self.context = context

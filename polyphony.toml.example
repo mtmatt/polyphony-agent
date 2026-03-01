@@ -6,11 +6,13 @@ auto_commit = false
 # Individual settings for planner and executor
 [planner]
 provider = "gemini"
-model = "gemini-3-flash-preview"
+model = "gemini-2.0-pro-exp"
+flash_model = "gemini-2.0-flash-exp"
 
 [executor]
 provider = "openai"
 model = "gpt-4o"
+flash_model = "gpt-4o-mini"
 base_url = "http://localhost:11434/v1" # Example for Ollama
 api_key = "ollama"
 

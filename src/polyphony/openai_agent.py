@@ -7,6 +7,8 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from .agent import BaseAgent, AgentTask, AgentResult, AgentAction
 from .utils import write_file, replace_text, run_command
+from .config import MCPServerConfig
+from .mcp_client import MCPClient
 
 console = Console()
 
@@ -62,10 +64,34 @@ TOOLS = [
 ]
 
 class OpenAIAgent(BaseAgent):
-    def __init__(self, model_name: str = "gpt-4o", base_url: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, model_name: str = "gpt-4o", flash_model_name: Optional[str] = None, base_url: Optional[str] = None, api_key: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
         self.client = OpenAI(base_url=base_url, api_key=api_key)
-        self.model_name = model_name
+        self._model_name = model_name
+        self._pro_model_name = model_name
+        self._flash_model_name = flash_model_name
         self.context = ""
+        self.mcp_clients = [MCPClient(cfg) for cfg in (mcp_servers or [])]
+        for client in self.mcp_clients:
+            try:
+                client.start()
+            except Exception as e:
+                console.print(f"[bold red]Error starting MCP server {client.config.command}: {e}[/bold red]")
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    @model_name.setter
+    def model_name(self, value: str):
+        self._model_name = value
+
+    @property
+    def pro_model_name(self) -> str:
+        return self._pro_model_name
+
+    @property
+    def flash_model_name(self) -> Optional[str]:
+        return self._flash_model_name
 
     def receive_context(self, context: str):
         self.context = context
@@ -127,6 +153,27 @@ class OpenAIAgent(BaseAgent):
             if progress and callable(progress):
                 progress(p)
 
+        # Dynamic tools list including MCP tools
+        current_tools = list(TOOLS)
+        mcp_tool_map = {} # tool_name -> client
+
+        for client in self.mcp_clients:
+            try:
+                tools = client.list_tools()
+                for tool in tools:
+                    name = tool.get("name")
+                    mcp_tool_map[name] = client
+                    current_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})
+                        }
+                    })
+            except Exception as e:
+                console.print(f"[bold red]Error listing tools from MCP server {client.config.command}: {e}[/bold red]")
+
         messages = [
             {"role": "system", "content": (
                 f"You are an expert software engineer. System Context:\n{self.context}\n"
@@ -139,13 +186,13 @@ class OpenAIAgent(BaseAgent):
         
         try:
             # Tool calling loop
-            for i in range(5): # Max 5 tool calls per task
-                update_progress(10 + i*15) # Progress through steps
+            for i in range(10): # Max 10 tool calls per task to accommodate MCP tool flows
+                update_progress(10 + i*8) # Progress through steps
                 
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
-                    tools=TOOLS,
+                    tools=current_tools,
                     tool_choice="auto"
                 )
                 
@@ -188,6 +235,21 @@ class OpenAIAgent(BaseAgent):
                         cmd = args.get("command")
                         console.print(f"  [dim][tool][/dim] Running: [bold cyan]{cmd}[/bold cyan]")
                         result = run_command(**args)
+                    elif func_name in mcp_tool_map:
+                        client = mcp_tool_map[func_name]
+                        console.print(f"  [dim][mcp tool][/dim] {func_name} from {client.config.command}")
+                        try:
+                            mcp_result = client.call_tool(func_name, args)
+                            # MCP tool result is usually a list of content blocks
+                            result_content = []
+                            for content_block in mcp_result.get("content", []):
+                                if content_block.get("type") == "text":
+                                    result_content.append(content_block.get("text"))
+                                elif content_block.get("type") == "image":
+                                    result_content.append("[Image data omitted]")
+                            result = "\n".join(result_content) if result_content else "Success"
+                        except Exception as e:
+                            result = f"Error calling MCP tool {func_name}: {e}"
                     else:
                         result = f"Error: Unknown tool {func_name}"
                     

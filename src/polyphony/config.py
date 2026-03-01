@@ -1,18 +1,25 @@
 import os
 import tomllib
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
 class AgentConfig(BaseModel):
     provider: str = Field(default="gemini")
     model: Optional[str] = None
+    flash_model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+
+class MCPServerConfig(BaseModel):
+    command: str
+    args: List[str] = Field(default_factory=list)
+    env: Optional[Dict[str, str]] = None
 
 class Config(BaseModel):
     # Support both flat and nested structure
     planner: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-3-flash-preview"))
-    executor: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-2.0-flash-exp"))
+    executor: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-2.0-flash-exp", flash_model="gemini-3-flash-preview"))
+    mcp_servers: List[MCPServerConfig] = Field(default_factory=list)
     auto_commit: bool = Field(default=False)
 
 def load_config(config_path: str = "polyphony.toml") -> Config:

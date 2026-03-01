@@ -7,6 +7,7 @@ class AgentTask(BaseModel):
     description: str
     context: Optional[str] = None
     agent_type: Optional[str] = "executor" # executor, planner, etc.
+    complexity: Optional[str] = None # simple, complex
     status: str = "pending" # pending, in-progress, completed, failed
     verification_command: Optional[str] = None # e.g., "pytest" or "python my_script.py"
     retry_count: int = 0
@@ -27,6 +28,26 @@ class AgentResult(BaseModel):
     verification_output: Optional[str] = None
 
 class BaseAgent(ABC):
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        pass
+
+    @model_name.setter
+    @abstractmethod
+    def model_name(self, value: str):
+        pass
+
+    @property
+    @abstractmethod
+    def pro_model_name(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def flash_model_name(self) -> Optional[str]:
+        pass
+
     @abstractmethod
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         pass

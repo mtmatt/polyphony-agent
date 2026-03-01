@@ -9,18 +9,18 @@ from .config import load_config, AgentConfig, Config
 
 console = Console()
 
-def create_agent(agent_config: AgentConfig):
+def create_agent(agent_config: AgentConfig, mcp_servers: Optional[List[MCPServerConfig]] = None):
     # If the provider is 'openai' or any other name but has a base_url, we treat it as OpenAI-compatible
     if agent_config.provider == "gemini":
         model = agent_config.model or "gemini-3-flash-preview"
-        return GeminiAgent(model_name=model)
+        return GeminiAgent(model_name=model, flash_model_name=agent_config.flash_model, mcp_servers=mcp_servers)
     elif agent_config.provider == "openai" or agent_config.base_url:
         model = agent_config.model or "gpt-4o"
-        return OpenAIAgent(model_name=model, base_url=agent_config.base_url, api_key=agent_config.api_key)
+        return OpenAIAgent(model_name=model, flash_model_name=agent_config.flash_model, base_url=agent_config.base_url, api_key=agent_config.api_key, mcp_servers=mcp_servers)
     else:
         # Fallback to gemini if provider is unknown but no base_url
         console.print(f"[yellow]Warning:[/yellow] Unknown provider '{agent_config.provider}'. Defaulting to Gemini.")
-        return GeminiAgent(model_name="gemini-3-flash-preview")
+        return GeminiAgent(model_name="gemini-3-flash-preview", flash_model_name=agent_config.flash_model, mcp_servers=mcp_servers)
 
 def main():
     parser = argparse.ArgumentParser(description="Polyphony Agent CLI")
@@ -30,16 +30,19 @@ def main():
     # Simple flags (override both or default)
     parser.add_argument("--provider", type=str, help="Default AI provider.")
     parser.add_argument("--model", type=str, help="Default model.")
+    parser.add_argument("--flash-model", type=str, help="Default flash model.")
     parser.add_argument("--base-url", type=str, help="Default base URL.")
     parser.add_argument("--api-key", type=str, help="Default API key.")
     
     # Planner specific flags
     parser.add_argument("--planner-provider", type=str, help="AI provider for planning.")
     parser.add_argument("--planner-model", type=str, help="Model for planning.")
+    parser.add_argument("--planner-flash-model", type=str, help="Flash model for planning.")
     
     # Executor specific flags
     parser.add_argument("--executor-provider", type=str, help="AI provider for execution.")
     parser.add_argument("--executor-model", type=str, help="Model for execution.")
+    parser.add_argument("--executor-flash-model", type=str, help="Flash model for execution.")
     
     parser.add_argument("--auto-commit", action="store_true", default=None, help="Auto-commit successful tasks.")
     parser.add_argument("--spec", type=str, help="Path to a specification file to provide as context.")
@@ -57,6 +60,7 @@ def main():
     planner_config = config.planner
     planner_config.provider = args.planner_provider or args.provider or planner_config.provider
     planner_config.model = args.planner_model or args.model or planner_config.model
+    planner_config.flash_model = args.planner_flash_model or args.flash_model or planner_config.flash_model
     planner_config.base_url = args.base_url or planner_config.base_url
     planner_config.api_key = args.api_key or planner_config.api_key or os.environ.get("OPENAI_API_KEY")
 
@@ -64,14 +68,15 @@ def main():
     executor_config = config.executor
     executor_config.provider = args.executor_provider or args.provider or executor_config.provider
     executor_config.model = args.executor_model or args.model or executor_config.model
+    executor_config.flash_model = args.executor_flash_model or args.flash_model or executor_config.flash_model
     executor_config.base_url = args.base_url or executor_config.base_url
     executor_config.api_key = args.api_key or executor_config.api_key or os.environ.get("OPENAI_API_KEY")
 
     auto_commit = args.auto_commit if args.auto_commit is not None else config.auto_commit
 
     # Create Agents
-    planner = create_agent(planner_config)
-    executor = create_agent(executor_config)
+    planner = create_agent(planner_config, mcp_servers=config.mcp_servers)
+    executor = create_agent(executor_config, mcp_servers=config.mcp_servers)
 
     orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit)
     

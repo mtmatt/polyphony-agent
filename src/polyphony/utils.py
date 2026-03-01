@@ -1,6 +1,8 @@
 import subprocess
 import os
-from typing import Optional
+import re
+import ast
+from typing import Optional, List
 
 def is_git_repo(path: str = ".") -> bool:
     try:
@@ -87,9 +89,30 @@ def run_command(command: str) -> str:
     except Exception as e:
         return f"Error running command: {e}"
 
-import re
+def extract_relevant_dirs(text: str, path: str = ".") -> List[str]:
+    """
+    Extracts potential directory names from text that exist in the given path.
+    """
+    relevant = []
+    try:
+        # Get all directories (excluding hidden and __pycache__)
+        all_dirs = []
+        for root, dirs, _ in os.walk(path):
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
+            rel_root = os.path.relpath(root, path)
+            if rel_root != '.':
+                all_dirs.append(rel_root)
+        
+        text_lower = text.lower()
+        for d in all_dirs:
+            # Check if the directory name or the full relative path is in the text
+            if d.lower() in text_lower or os.path.basename(d).lower() in text_lower:
+                relevant.append(d)
+    except Exception:
+        pass
+    return relevant
 
-def get_repo_map(path: str = ".") -> str:
+def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> str:
     """
     Returns a string representation of the project structure, including key symbols for Python files.
     """
@@ -99,9 +122,23 @@ def get_repo_map(path: str = ".") -> str:
             # Exclude hidden directories and __pycache__
             dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
             
-            level = root.replace(path, '').count(os.sep)
+            rel_root = os.path.relpath(root, path)
+            
+            # Task-based directory filtering
+            if include_only and rel_root != '.':
+                is_relevant = False
+                for pattern in include_only:
+                    if rel_root.startswith(pattern) or pattern.startswith(rel_root):
+                        is_relevant = True
+                        break
+                if not is_relevant:
+                    dirs[:] = []
+                    continue
+
+            level = 0 if rel_root == '.' else rel_root.count(os.sep) + 1
             indent = ' ' * 4 * level
-            repo_map.append(f"{indent}{os.path.basename(root)}/")
+            display_name = os.path.basename(root) if rel_root != '.' else os.path.basename(os.path.abspath(path))
+            repo_map.append(f"{indent}{display_name}/")
             
             sub_indent = ' ' * 4 * (level + 1)
             for f in files:
@@ -111,14 +148,24 @@ def get_repo_map(path: str = ".") -> str:
                 file_path = os.path.join(root, f)
                 repo_map.append(f"{sub_indent}{f}")
                 
-                # If it's a Python file, extract symbols
+                # If it's a Python file, extract symbols using AST
                 if f.endswith('.py'):
                     try:
-                        with open(file_path, 'r') as file_content:
-                            content = file_content.read()
-                            # Find classes and functions
-                            classes = re.findall(r'^class\s+([a-zA-Z_][a-zA-Z0-9_]*)', content, re.MULTILINE)
-                            functions = re.findall(r'^def\s+([a-zA-Z_][a-zA-Z0-9_]*)', content, re.MULTILINE)
+                        with open(file_path, 'r', encoding='utf-8') as file_content:
+                            tree = ast.parse(file_content.read())
+                            
+                            classes = []
+                            functions = []
+                            
+                            for node in tree.body:
+                                if isinstance(node, ast.ClassDef):
+                                    classes.append(node.name)
+                                    # Include methods in the same functions list for simplicity in repo map
+                                    for subnode in node.body:
+                                        if isinstance(subnode, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                            functions.append(subnode.name)
+                                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    functions.append(node.name)
                             
                             if classes or functions:
                                 symbol_indent = ' ' * 4 * (level + 2)
@@ -127,7 +174,7 @@ def get_repo_map(path: str = ".") -> str:
                                 if functions:
                                     repo_map.append(f"{symbol_indent}Functions: {', '.join(functions)}")
                     except Exception:
-                        pass # Skip if file cannot be read
+                        pass # Skip if file cannot be read or parsed
         
         return "\n".join(repo_map)
     except Exception as e:
