@@ -207,6 +207,10 @@ class Orchestrator:
             
             # 4. Filter out completed tasks
             remaining_tasks = [t for t in tasks if t.status != "completed"]
+            console.print(f"[debug] All tasks: {[t.id for t in tasks]}")
+            console.print(f"[debug] Task statuses: {[(t.id, t.status) for t in tasks]}")
+            console.print(f"[debug] Remaining tasks: {[t.id for t in remaining_tasks]}")
+            
             if len(remaining_tasks) < len(tasks):
                 console.print(f"[dim]Skipping {len(tasks) - len(remaining_tasks)} completed tasks for this goal.[/dim]")
             
