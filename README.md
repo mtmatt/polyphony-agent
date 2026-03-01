@@ -63,3 +63,9 @@ For complex tasks, you can provide an entire specification file as context:
 ```bash
 polyphony "Implement the features described in the spec" --spec requirements.md
 ```
+
+
+## Recent Activity
+
+_Last successful run: 2026-03-01 - original goal_
+

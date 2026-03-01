@@ -3,6 +3,9 @@ import subprocess
 import time
 import asyncio
 import concurrent.futures
+import uuid
+import os
+from datetime import datetime
 from threading import Lock
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
@@ -10,6 +13,7 @@ from .agent import BaseAgent, AgentTask, AgentResult
 from .gemini_agent import GeminiAgent
 from .run_summary import RunSummary
 from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
+from .checkpoint import RunCheckpoint
 
 console = Console()
 
@@ -45,8 +49,10 @@ class DependencyResolver:
         
         return batches
 
+from .cost import CostTracker
+
 class Orchestrator:
-    def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False):
+    def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False, budget_limit: float = 0.0, run_id: Optional[str] = None, checkpoint_dir: str = ".polyphony/checkpoints"):
         self.planner = planner
         self.executor = executor or planner
         self.agents: Dict[str, BaseAgent] = {
@@ -55,11 +61,60 @@ class Orchestrator:
         }
         self.auto_commit = auto_commit
         self.parallel = parallel
+        self.budget_limit = budget_limit
+        self.total_cost_tracker = CostTracker()
         self.run_summary = None
         self._lock = Lock()
+        self.run_id = run_id or str(uuid.uuid4())[:8]
+        self.checkpoint_dir = checkpoint_dir
+        self.start_time = datetime.now()
+        self.tasks_by_goal: Dict[str, List[AgentTask]] = {}
+        self.is_simple = False
+        self._is_resumed = False
 
     def register_agent(self, name: str, agent: BaseAgent):
         self.agents[name] = agent
+
+    def _save_checkpoint(self, goal: str, context: str):
+        """Saves the current state to a checkpoint file."""
+        checkpoint = RunCheckpoint(
+            run_id=self.run_id,
+            goal=goal,
+            context=context,
+            tasks_by_goal=self.tasks_by_goal,
+            results=self.run_summary.results if self.run_summary else [],
+            result_tasks=self.run_summary.tasks if self.run_summary else [],
+            cost_tracker=self.total_cost_tracker,
+            start_time=self.start_time,
+            is_simple=self.is_simple,
+            last_updated=datetime.now()
+        )
+        checkpoint.save(self.checkpoint_dir)
+
+    def _check_budget(self):
+        """Checks if the budget limit has been reached and raises an error if it has."""
+        if self.budget_limit > 0 and self.total_cost_tracker.total_cost >= self.budget_limit:
+            console.print(f"\n[bold red]Budget limit reached: ${self.budget_limit:.4f}[/bold red]")
+            raise RuntimeError(f"Budget limit reached: ${self.budget_limit:.4f}")
+        
+        # Warn at 80%
+        if self.budget_limit > 0 and self.total_cost_tracker.total_cost >= self.budget_limit * 0.8:
+            console.print(f"\n[bold yellow]Warning: Budget usage at {self.total_cost_tracker.total_cost / self.budget_limit:.1%}[/bold yellow]")
+
+    def _sync_usage(self):
+        """Syncs usage from all agents to the current run summary and total cost tracker."""
+        for agent in self.agents.values():
+            for model, usage in list(agent.usage_by_model.items()):
+                if self.run_summary:
+                    self.run_summary.cost_tracker.add_usage(
+                        model, usage.prompt_tokens, usage.completion_tokens
+                    )
+                self.total_cost_tracker.add_usage(
+                    model, usage.prompt_tokens, usage.completion_tokens
+                )
+                # Clear agent's usage so it's not double-counted
+                agent.usage_by_model = {}
+        self._check_budget()
 
     def _get_repo_map(self, goal: Optional[str] = None) -> str:
         include_only = None
@@ -71,21 +126,48 @@ class Orchestrator:
         return get_repo_map(include_only=include_only)
 
     async def run_goal(self, goal: str, context: str = ""):
-        self.run_summary = RunSummary(goal)
-        console.print(f"\n[bold blue]>>> Orchestrating goal: {goal}[/bold blue]")
+        self._check_budget()
+        is_root = False
         
-        # 1. Classify the goal
-        is_simple = False
-        if hasattr(self.planner, 'classify_goal'):
-            classification = await asyncio.to_thread(self.planner.classify_goal, goal)
-            is_simple = (classification == "simple")
-            console.print(f"[dim]Goal classified as: {classification}[/dim]")
+        # Check if we should resume
+        if self.run_summary is None:
+            is_root = True
+            checkpoint = RunCheckpoint.load(self.run_id, self.checkpoint_dir)
+            if checkpoint:
+                console.print(f"[bold green]Resuming run from checkpoint: {self.run_id}[/bold green]")
+                self.run_summary = RunSummary(checkpoint.goal)
+                self.run_summary.start_time = checkpoint.start_time
+                self.tasks_by_goal = checkpoint.tasks_by_goal
+                self.total_cost_tracker = checkpoint.cost_tracker
+                self.is_simple = checkpoint.is_simple
+                for task, result in zip(checkpoint.result_tasks, checkpoint.results):
+                    self.run_summary.add_result(task, result)
+                self._is_resumed = True
+                goal = checkpoint.goal
+                context = checkpoint.context
+            else:
+                self.run_summary = RunSummary(goal)
+
+        console.print(f"\n[bold blue]>>> Orchestrating goal: {goal} (Run ID: {self.run_id})[/bold blue]")
+        
+        # Check if we have tasks for this goal (already planned/decomposed)
+        tasks = self.tasks_by_goal.get(goal)
+        
+        # 1. Classify the goal (Skip if resumed or already have tasks)
+        if tasks is None and not self._is_resumed:
+            if hasattr(self.planner, 'classify_goal'):
+                classification = await asyncio.to_thread(self.planner.classify_goal, goal)
+                self.is_simple = (classification == "simple")
+                console.print(f"[dim]Goal classified as: {classification}[/dim]")
+                self._sync_usage()
+            else:
+                self.is_simple = False
         
         # Multi-model support: select model based on complexity
         original_models = {name: agent.model_name for name, agent in self.agents.items()}
         try:
             for name, agent in self.agents.items():
-                if is_simple and agent.flash_model_name:
+                if self.is_simple and agent.flash_model_name:
                     agent.model_name = agent.flash_model_name
                     console.print(f"[dim]Switching {name} to flash model: {agent.model_name}[/dim]")
                 else:
@@ -105,16 +187,33 @@ class Orchestrator:
                 agent.receive_context(full_context)
 
             # 3. Plan or Direct Execution
-            if is_simple:
-                tasks = [AgentTask(id="direct_task", description=goal, agent_type="executor")]
-                console.print(f"[dim]Executing simple goal directly.[/dim]")
-            else:
-                if hasattr(self.planner, 'decompose_goal'):
-                    tasks = await asyncio.to_thread(self.planner.decompose_goal, goal)
+            if tasks is None:
+                if self.is_simple:
+                    tasks = [AgentTask(id="direct_task", description=goal, agent_type="executor")]
+                    console.print(f"[dim]Executing simple goal directly.[/dim]")
                 else:
-                    tasks = [AgentTask(id="fallback_task", description=goal, agent_type="executor")]
-                console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
+                    if hasattr(self.planner, 'decompose_goal'):
+                        tasks = await asyncio.to_thread(self.planner.decompose_goal, goal)
+                        self._sync_usage()
+                    else:
+                        tasks = [AgentTask(id="fallback_task", description=goal, agent_type="executor")]
+                    console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
+                
+                self.tasks_by_goal[goal] = tasks
+                
+                # Save initial checkpoint
+                if is_root:
+                    self._save_checkpoint(goal, context)
             
+            # 4. Filter out completed tasks
+            remaining_tasks = [t for t in tasks if t.status != "completed"]
+            if len(remaining_tasks) < len(tasks):
+                console.print(f"[dim]Skipping {len(tasks) - len(remaining_tasks)} completed tasks for this goal.[/dim]")
+            
+            if not remaining_tasks:
+                console.print(f"[bold green]All tasks for this goal already completed.[/bold green]")
+                return
+
             # 4. Multi-layered progress
             with Progress(
                 SpinnerColumn(),
@@ -126,35 +225,57 @@ class Orchestrator:
                 transient=True
             ) as progress:
                 global_task = progress.add_task("[blue]Overall Progress", total=len(tasks))
+                # Advance for completed tasks
+                progress.advance(global_task, len(tasks) - len(remaining_tasks))
                 
-                if self.parallel and len(tasks) > 1:
+                if self.parallel and len(remaining_tasks) > 1:
                     console.print(f"[dim]Executing tasks in parallel (Max 4 workers).[/dim]")
-                    await self._execute_parallel(tasks, progress, global_task)
+                    await self._execute_parallel(remaining_tasks, progress, global_task, goal, context)
                 else:
                     task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
-                    for task in tasks:
+                    for task in remaining_tasks:
                         await self.execute_with_verification(task, progress, global_task, task_layer)
                         progress.advance(global_task)
+                        # Save checkpoint after each task
+                        if is_root:
+                            self._save_checkpoint(goal, context)
         finally:
             # Restore models
             for name, model in original_models.items():
                 self.agents[name].model_name = model
-        
-        # Finalize and report summary
-        summary_path = self.run_summary.save()
-        console.print(f"\n[bold green]Goal execution complete![/bold green]")
-        console.print(f"[bold cyan]Run Summary:[/bold cyan] {summary_path}")
-        
-        # Show brief summary
-        total = len(self.run_summary.tasks)
-        successful = sum(1 for r in self.run_summary.results if r.success)
-        if successful == total and total > 0:
-            console.print(f"[green][OK] All {total} task(s) completed successfully[/green]")
-            console.print(f"[dim]Documentation updated in GEMINI.md and README.md[/dim]")
-        else:
-            console.print(f"[yellow][WARNING] {successful}/{total} task(s) completed[/yellow]")
 
-    async def _execute_parallel(self, tasks: List[AgentTask], progress: Progress, global_task):
+            # Final sync and budget check for this level
+            self._sync_usage()
+            
+            # Save checkpoint when leaving run_goal level if we are root
+            if is_root:
+                self._save_checkpoint(goal, context)
+        
+        # Only finalize if this is the root goal
+        if is_root:
+            # Save final checkpoint before summary
+            self._save_checkpoint(goal, context)
+            
+            # Finalize and report summary
+            summary_path = self.run_summary.save()
+            console.print(f"\n[bold green]Goal execution complete![/bold green]")
+            console.print(f"[bold cyan]Run Summary:[/bold cyan] {summary_path}")
+            
+            # Show brief summary
+            total = len(self.run_summary.tasks)
+            successful = sum(1 for r in self.run_summary.results if r.success)
+            if successful == total and total > 0:
+                console.print(f"[green][OK] All {total} task(s) completed successfully[/green]")
+                console.print(f"[dim]Total Cost: ${self.run_summary.cost_tracker.total_cost:.4f}[/dim]")
+                console.print(f"[dim]Documentation updated in GEMINI.md and README.md[/dim]")
+            else:
+                console.print(f"[yellow][WARNING] {successful}/{total} task(s) completed[/yellow]")
+                console.print(f"[dim]Total Cost so far: ${self.run_summary.cost_tracker.total_cost:.4f}[/dim]")
+            
+            # Remove checkpoint after successful completion?
+            # Or keep it for history. Let's keep it for now.
+
+    async def _execute_parallel(self, tasks: List[AgentTask], progress: Progress, global_task, goal: str, context: str):
         """
         Executes tasks in parallel while respecting dependencies by grouping them into batches.
         Uses asyncio.gather for processing batches of independent tasks with a concurrency limit.
@@ -174,6 +295,11 @@ class Orchestrator:
                     layer = progress.add_task(f"[cyan]Task: {task.id}", total=100)
                     try:
                         await self.execute_with_verification(task, progress, global_task, layer)
+                        # Save checkpoint after each task in parallel too
+                        # Need to be careful with concurrency here, but _save_checkpoint uses a Lock-free write (overwrites)
+                        # Actually Orchestrator has a self._lock, maybe use it?
+                        with self._lock:
+                            self._save_checkpoint(goal, context)
                     except Exception as e:
                         console.print(f"[bold red]Task {task.id} failed with exception: {e}[/bold red]")
                     finally:
@@ -188,12 +314,14 @@ class Orchestrator:
         """
         Executes a task and verifies it using a verification command if provided.
         """
+        task.status = "in-progress"
         progress.update(task_layer, completed=0, description=f"[cyan]Executing: {task.id}")
         
         # Recursive check: if the task needs more planning
         if task.agent_type == 'planner':
             progress.update(task_layer, completed=50, description=f"[cyan]Recursing: {task.id}")
             await self.run_goal(task.description, context=task.context or "")
+            task.status = "completed"
             progress.update(task_layer, completed=100)
             return
 
@@ -220,6 +348,10 @@ class Orchestrator:
                 result.duration = time.time() - start_time
                 
                 result.agent_model = getattr(agent, "model_name", "unknown")
+                
+                # Sync usage and check budget
+                self._sync_usage()
+                
                 progress.update(task_layer, completed=50, description=f"[cyan]Executing: {task.id}")
                 
                 # Capture modified files before commit
@@ -251,6 +383,7 @@ class Orchestrator:
                         if self.auto_commit and is_git_repo():
                             progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                             commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
+                            self._sync_usage()
                             git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
                             if git_res_dict.get("success"):
                                 result.commit_hash = git_res_dict.get("commit_hash")
@@ -259,6 +392,7 @@ class Orchestrator:
                                 console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
                         
                         self.run_summary.add_result(task, result)
+                        task.status = "completed"
                         progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
                         return
                     else:
@@ -273,6 +407,7 @@ class Orchestrator:
                     if self.auto_commit and is_git_repo():
                         progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                         commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
+                        self._sync_usage()
                         git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
                         if git_res_dict.get("success"):
                             result.commit_hash = git_res_dict.get("commit_hash")
@@ -281,12 +416,14 @@ class Orchestrator:
                             console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
                     
                     self.run_summary.add_result(task, result)
+                    task.status = "completed"
                     progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
                     return
         finally:
             # Restore original model
             agent.model_name = original_model
 
+        task.status = "failed"
         progress.update(task_layer, completed=100, description=f"[bold red]Failed: {task.id}")
 
     def _generate_reflection_prompt(self, task: AgentTask, result: AgentResult) -> str:

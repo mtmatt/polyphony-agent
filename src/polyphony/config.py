@@ -21,6 +21,7 @@ class Config(BaseModel):
     executor: AgentConfig = Field(default_factory=lambda: AgentConfig(provider="gemini", model="gemini-2.0-flash-exp", flash_model="gemini-3-flash-preview"))
     mcp_servers: List[MCPServerConfig] = Field(default_factory=list)
     auto_commit: bool = Field(default=False)
+    budget_limit: float = Field(default=0.0)
 
 def load_config(config_path: str = "polyphony.toml") -> Config:
     """

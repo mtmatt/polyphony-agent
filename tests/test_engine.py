@@ -7,6 +7,7 @@ from rich.progress import Progress
 
 class MockAgent(BaseAgent):
     def __init__(self, model_name="mock-pro", flash_model_name="mock-flash"):
+        super().__init__()
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = flash_model_name

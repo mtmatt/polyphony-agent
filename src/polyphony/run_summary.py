@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from .agent import AgentTask, AgentResult, AgentAction
+from .cost import CostTracker
 
 class RunSummary:
     def __init__(self, goal: str):
@@ -11,6 +12,7 @@ class RunSummary:
         self.tasks: List[AgentTask] = []
         self.start_time = datetime.now()
         self.end_time = None
+        self.cost_tracker = CostTracker()
 
     def add_result(self, task: AgentTask, result: AgentResult):
         self.results.append(result)
@@ -32,7 +34,20 @@ class RunSummary:
         successful_tasks = sum(1 for r in self.results if r.success)
         md += f"- **Total Tasks:** {total_tasks}\n"
         md += f"- **Successful Tasks:** {successful_tasks}\n"
-        md += f"- **Status:** {'[SUCCESS]' if successful_tasks == total_tasks and total_tasks > 0 else '[FAILED]'}\n\n"
+        md += f"- **Status:** {'[SUCCESS]' if successful_tasks == total_tasks and total_tasks > 0 else '[FAILED]'}\n"
+        md += f"- **Total Cost:** ${self.cost_tracker.total_cost:.4f}\n\n"
+
+        if self.cost_tracker.usage_by_model:
+            md += "### Usage Breakdown\n\n"
+            for model, usage in self.cost_tracker.usage_by_model.items():
+                pricing = self.cost_tracker.get_pricing(model)
+                model_cost = 0
+                if pricing:
+                    model_cost = (usage.prompt_tokens / 1_000_000.0 * pricing.input_1m) + \
+                                 (usage.completion_tokens / 1_000_000.0 * pricing.output_1m)
+                
+                md += f"- **{model}:** {usage.prompt_tokens:,} input, {usage.completion_tokens:,} output (${model_cost:.4f})\n"
+            md += "\n"
 
         md += "## Task Breakdown\n\n"
         for i, (task, result) in enumerate(zip(self.tasks, self.results)):
@@ -44,6 +59,9 @@ class RunSummary:
                 md += f"**Context:** {task.context}\n"
             
             md += f"**Agent Model:** `{result.agent_model}`\n"
+            if result.usage:
+                md += f"**Tokens:** {result.usage.prompt_tokens:,} input, {result.usage.completion_tokens:,} output\n"
+            
             if result.duration:
                 md += f"**Task Duration:** {result.duration:.2f}s\n"
 
@@ -96,6 +114,7 @@ class RunSummary:
         summary += f"- **Date:** {self.start_time.strftime('%Y-%m-%d')}\n"
         summary += f"- **Duration:** {duration}\n"
         summary += f"- **Status:** {'[SUCCESS]' if successful_tasks == total_tasks and total_tasks > 0 else '[FAILED]'}\n"
+        summary += f"- **Total Cost:** ${self.cost_tracker.total_cost:.4f}\n"
         summary += f"- **Tasks Completed:** {successful_tasks}/{total_tasks}\n\n"
         
         if successful_tasks == total_tasks and total_tasks > 0:

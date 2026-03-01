@@ -1,13 +1,14 @@
 # Polyphony Agent Configuration Example
 
-# Global auto-commit setting
+# Global settings
 auto_commit = false
+budget_limit = 5.0
 
 # Individual settings for planner and executor
 [planner]
 provider = "gemini"
-model = "gemini-2.0-pro-exp"
-flash_model = "gemini-2.0-flash-exp"
+model = "gemini-2.5-pro-exp"
+flash_model = "gemini-2.5-flash-exp"
 
 [executor]
 provider = "openai"
@@ -18,4 +19,4 @@ api_key = "ollama"
 
 # Fallback: Flat structure (sets both planner and executor to same values)
 # provider = "gemini"
-# model = "gemini-2.0-flash-exp"
+# model = "gemini-2.5-flash-exp"

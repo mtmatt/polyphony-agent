@@ -5,7 +5,7 @@ from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from .agent import BaseAgent, AgentTask, AgentResult, AgentAction
+from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage
 from .utils import write_file, replace_text, run_command
 from .config import MCPServerConfig
 from .mcp_client import MCPClient
@@ -65,6 +65,7 @@ TOOLS = [
 
 class OpenAIAgent(BaseAgent):
     def __init__(self, model_name: str = "gpt-4o", flash_model_name: Optional[str] = None, base_url: Optional[str] = None, api_key: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
+        super().__init__()
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self._model_name = model_name
         self._pro_model_name = model_name
@@ -108,7 +109,7 @@ class OpenAIAgent(BaseAgent):
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}]
             )
-            
+            self._update_usage(response.usage)
             content = response.choices[0].message.content.strip().lower()
             if "complex" in content:
                 return "complex"
@@ -136,7 +137,7 @@ class OpenAIAgent(BaseAgent):
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"}
             )
-            
+            self._update_usage(response.usage)
             content = response.choices[0].message.content
             if content:
                 plan = Plan.model_validate_json(content)
@@ -147,8 +148,20 @@ class OpenAIAgent(BaseAgent):
             print(f"Error decomposing goal with OpenAI: {e}")
             return []
 
+    def _update_usage(self, response_usage: Any):
+        if response_usage:
+            model_name = self.model_name
+            if model_name not in self.usage_by_model:
+                self.usage_by_model[model_name] = TokenUsage()
+            
+            usage = self.usage_by_model[model_name]
+            usage.prompt_tokens += response_usage.prompt_tokens
+            usage.completion_tokens += response_usage.completion_tokens
+            usage.total_tokens += response_usage.total_tokens
+
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         history: List[AgentAction] = []
+        total_usage = TokenUsage()
         
         def update_progress(p: int):
             if progress and callable(progress):
@@ -197,6 +210,12 @@ class OpenAIAgent(BaseAgent):
                     tool_choice="auto"
                 )
                 
+                if response.usage:
+                    self._update_usage(response.usage)
+                    total_usage.prompt_tokens += response.usage.prompt_tokens
+                    total_usage.completion_tokens += response.usage.completion_tokens
+                    total_usage.total_tokens += response.usage.total_tokens
+                
                 message = response.choices[0].message
                 messages.append(message)
                 
@@ -211,7 +230,8 @@ class OpenAIAgent(BaseAgent):
                         task_id=task.id, 
                         success=True, 
                         output=message.content.strip() if message.content else "Task completed.",
-                        history=history
+                        history=history,
+                        usage=total_usage
                     )
                 
                 for tool_call in message.tool_calls:
@@ -269,11 +289,11 @@ class OpenAIAgent(BaseAgent):
                     })
             
             update_progress(100)
-            return AgentResult(task_id=task.id, success=True, output="Max tool calls reached.", history=history)
+            return AgentResult(task_id=task.id, success=True, output="Max tool calls reached.", history=history, usage=total_usage)
 
         except Exception as e:
             update_progress(100)
-            return AgentResult(task_id=task.id, success=False, error=str(e), history=history)
+            return AgentResult(task_id=task.id, success=False, error=str(e), history=history, usage=total_usage)
 
     def generate_commit_message(self, result: AgentResult) -> str:
         """
@@ -291,7 +311,7 @@ class OpenAIAgent(BaseAgent):
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}]
             )
-            
+            self._update_usage(response.usage)
             content = response.choices[0].message.content.strip()
             return content
 

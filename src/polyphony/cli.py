@@ -8,6 +8,7 @@ from .gemini_agent import GeminiAgent
 from .openai_agent import OpenAIAgent
 from .engine import Orchestrator
 from .config import load_config, AgentConfig, Config
+from .checkpoint import RunCheckpoint
 
 console = Console()
 
@@ -47,11 +48,45 @@ def main():
     parser.add_argument("--executor-flash-model", type=str, help="Flash model for execution.")
     
     parser.add_argument("--auto-commit", action="store_true", default=None, help="Auto-commit successful tasks.")
+    parser.add_argument("--budget-limit", type=float, help="Maximum budget in USD.")
     parser.add_argument("--spec", type=str, help="Path to a specification file to provide as context.")
+    parser.add_argument("--run-id", type=str, help="Run ID to resume.")
+    parser.add_argument("--resume", action="store_true", help="Resume the latest run.")
+    parser.add_argument("--list-checkpoints", action="store_true", help="List available checkpoints.")
     
     args = parser.parse_args()
     
-    if not args.goal:
+    if args.list_checkpoints:
+        checkpoints = RunCheckpoint.list_checkpoints()
+        if not checkpoints:
+            console.print("No checkpoints found.")
+        else:
+            console.print("[bold]Available Checkpoints:[/bold]")
+            for cp in checkpoints:
+                console.print(f"- [cyan]{cp['run_id']}[/cyan]: {cp['goal']} ({cp['tasks_completed']} tasks completed, last updated: {cp['last_updated']})")
+        sys.exit(0)
+
+    run_id = args.run_id
+    if args.resume and not run_id:
+        checkpoints = RunCheckpoint.list_checkpoints()
+        if checkpoints:
+            run_id = checkpoints[0]["run_id"]
+            console.print(f"[dim]Automatically selected latest checkpoint: {run_id}[/dim]")
+        else:
+            console.print("[bold red]Error:[/bold red] No checkpoints found to resume.")
+            sys.exit(1)
+
+    goal = args.goal
+    if run_id and not goal:
+        # Load goal from checkpoint to avoid error
+        checkpoint = RunCheckpoint.load(run_id)
+        if checkpoint:
+            goal = checkpoint.goal
+        else:
+             console.print(f"[bold red]Error:[/bold red] Checkpoint {run_id} not found.")
+             sys.exit(1)
+
+    if not goal:
         parser.print_help()
         sys.exit(0)
 
@@ -75,12 +110,13 @@ def main():
     executor_config.api_key = args.api_key or executor_config.api_key or os.environ.get("OPENAI_API_KEY")
 
     auto_commit = args.auto_commit if args.auto_commit is not None else config.auto_commit
+    budget_limit = args.budget_limit if args.budget_limit is not None else config.budget_limit
 
     # Create Agents
     planner = create_agent(planner_config, mcp_servers=config.mcp_servers)
     executor = create_agent(executor_config, mcp_servers=config.mcp_servers)
 
-    orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit)
+    orchestrator = Orchestrator(planner=planner, executor=executor, auto_commit=auto_commit, budget_limit=budget_limit, run_id=run_id)
     
     # Load spec context if provided
     spec_context = ""
@@ -94,7 +130,7 @@ def main():
             sys.exit(1)
 
     try:
-        asyncio.run(orchestrator.run_goal(args.goal, context=spec_context))
+        asyncio.run(orchestrator.run_goal(goal, context=spec_context))
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         sys.exit(1)

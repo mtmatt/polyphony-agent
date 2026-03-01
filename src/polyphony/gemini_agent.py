@@ -1,8 +1,8 @@
 import subprocess
 import json
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
-from .agent import BaseAgent, AgentTask, AgentResult
+from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage
 from .utils import extract_json
 
 from .config import MCPServerConfig
@@ -12,6 +12,7 @@ class Plan(BaseModel):
 
 class GeminiAgent(BaseAgent):
     def __init__(self, model_name: str = "gemini-3-flash-preview", flash_model_name: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
+        super().__init__()
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = flash_model_name
@@ -59,6 +60,7 @@ class GeminiAgent(BaseAgent):
             output = result.stdout
             outer_json = extract_json(output)
             if outer_json:
+                self._extract_usage(outer_json)
                 model_response = outer_json.get('response', '').strip().lower()
                 if "complex" in model_response:
                     return "complex"
@@ -101,6 +103,7 @@ class GeminiAgent(BaseAgent):
             outer_json = extract_json(output)
             
             if outer_json:
+                self._extract_usage(outer_json)
                 # The actual response from the model is in outer_json['response']
                 model_response = outer_json.get('response', '')
                 
@@ -121,6 +124,35 @@ class GeminiAgent(BaseAgent):
         except Exception as e:
             print(f"Error decomposing goal: {e}")
             return []
+
+    def _extract_usage(self, outer_json: Dict[str, Any]) -> Optional[TokenUsage]:
+        stats = outer_json.get("stats", {})
+        models = stats.get("models", {})
+        model_stats = models.get(self.model_name)
+        if not model_stats:
+            # Try to find any model if the name doesn't match exactly
+            if models:
+                # Return the one with the most tokens or just the first one
+                model_stats = list(models.values())[0]
+        
+        if model_stats:
+            tokens = model_stats.get("tokens", {})
+            usage = TokenUsage(
+                prompt_tokens=tokens.get("prompt", 0) or tokens.get("input", 0),
+                completion_tokens=tokens.get("candidates", 0) or tokens.get("output", 0),
+                total_tokens=tokens.get("total", 0)
+            )
+            
+            # Update usage by model
+            model_name = self.model_name
+            if model_name not in self.usage_by_model:
+                self.usage_by_model[model_name] = TokenUsage()
+            
+            self.usage_by_model[model_name].prompt_tokens += usage.prompt_tokens
+            self.usage_by_model[model_name].completion_tokens += usage.completion_tokens
+            self.usage_by_model[model_name].total_tokens += usage.total_tokens
+            return usage
+        return None
 
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         """
@@ -151,7 +183,8 @@ class GeminiAgent(BaseAgent):
             outer_json = extract_json(output)
             if outer_json:
                 model_response = outer_json.get('response', '')
-                return AgentResult(task_id=task.id, success=True, output=model_response)
+                usage = self._extract_usage(outer_json)
+                return AgentResult(task_id=task.id, success=True, output=model_response, usage=usage)
             else:
                 return AgentResult(task_id=task.id, success=False, error="No JSON found in gemini output")
 
@@ -183,6 +216,7 @@ class GeminiAgent(BaseAgent):
             output = sub_result.stdout
             outer_json = extract_json(output)
             if outer_json:
+                self._extract_usage(outer_json)
                 model_response = outer_json.get('response', '').strip()
                 return model_response
             else:

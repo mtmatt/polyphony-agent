@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Any, Dict
+from .cost import TokenUsage
 
 class AgentTask(BaseModel):
     id: str
@@ -38,10 +39,14 @@ class AgentResult(BaseModel):
     history: List[AgentAction] = []
     verification_output: Optional[str] = None
     duration: Optional[float] = None
+    usage: Optional[TokenUsage] = None
     commit_hash: Optional[str] = None
     files_changed: List[str] = []
 
 class BaseAgent(ABC):
+    def __init__(self):
+        self.usage_by_model: Dict[str, TokenUsage] = {}
+
     @property
     @abstractmethod
     def model_name(self) -> str:
