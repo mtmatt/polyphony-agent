@@ -6,7 +6,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from .agent import BaseAgent, AgentTask, AgentResult
 from .gemini_agent import GeminiAgent
 from .run_summary import RunSummary
-from .utils import git_commit, get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
+from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
 
 console = Console()
 
@@ -127,14 +127,24 @@ class Orchestrator:
         elif task.complexity == "complex":
             agent.model_name = agent.pro_model_name
         
+        from .utils import git_get_modified_files, git_commit
+
         try:
             while task.retry_count <= task.max_retries:
                 # Step 1: Execute using the selected agent
                 progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking ({agent.model_name}): {task.id}")
+                
+                start_time = time.time()
                 result = agent.execute_task(task, progress=lambda p: progress.update(task_layer, completed=p))
+                result.duration = time.time() - start_time
+                
                 result.agent_model = getattr(agent, "model_name", "unknown")
                 progress.update(task_layer, completed=50, description=f"[cyan]Executing: {task.id}")
                 
+                # Capture modified files before commit
+                if is_git_repo():
+                    result.files_changed = git_get_modified_files()
+
                 if not result.success:
                     task.retry_count += 1
                     self.run_summary.add_result(task, result)
@@ -159,9 +169,12 @@ class Orchestrator:
                         if self.auto_commit and is_git_repo():
                             progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                             commit_msg = agent.generate_commit_message(result)
-                            git_res = git_commit(commit_msg)
-                            if git_res:
-                                console.print(f"  [dim][git][/dim] {git_res}")
+                            git_res_dict = git_commit(commit_msg)
+                            if git_res_dict.get("success"):
+                                result.commit_hash = git_res_dict.get("commit_hash")
+                                console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
+                            else:
+                                console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
                         
                         self.run_summary.add_result(task, result)
                         progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
@@ -178,9 +191,12 @@ class Orchestrator:
                     if self.auto_commit and is_git_repo():
                         progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
                         commit_msg = agent.generate_commit_message(result)
-                        git_res = git_commit(commit_msg)
-                        if git_res:
-                            console.print(f"  [dim][git][/dim] {git_res}")
+                        git_res_dict = git_commit(commit_msg)
+                        if git_res_dict.get("success"):
+                            result.commit_hash = git_res_dict.get("commit_hash")
+                            console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
+                        else:
+                            console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
                     
                     self.run_summary.add_result(task, result)
                     progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")

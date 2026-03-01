@@ -16,9 +16,10 @@ def is_git_repo(path: str = ".") -> bool:
     except subprocess.CalledProcessError:
         return False
 
-def git_commit(message: str, path: str = ".") -> Optional[str]:
+def git_commit(message: str, path: str = ".") -> Dict[str, Any]:
     """
     Stages all changes and commits with the given message.
+    Returns a dictionary with success, message, and optionally commit_hash.
     """
     try:
         # Stage all changes
@@ -26,15 +27,52 @@ def git_commit(message: str, path: str = ".") -> Optional[str]:
         # Check if there are changes to commit
         status = subprocess.run(["git", "status", "--porcelain"], cwd=path, capture_output=True, text=True, check=True)
         if not status.stdout.strip():
-            return "No changes to commit."
+            return {"success": True, "message": "No changes to commit."}
         
         # Commit
         subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True, text=True)
-        return f"Committed: {message}"
+        
+        # Get the commit hash
+        rev_res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True)
+        commit_hash = rev_res.stdout.strip()
+        
+        return {
+            "success": True, 
+            "message": f"Committed: {message}",
+            "commit_hash": commit_hash
+        }
     except subprocess.CalledProcessError as e:
-        return f"Git error: {e.stderr or e.stdout or str(e)}"
+        return {
+            "success": False, 
+            "message": f"Git error: {e.stderr or e.stdout or str(e)}"
+        }
     except Exception as e:
-        return f"Error during git commit: {e}"
+        return {
+            "success": False, 
+            "message": f"Error during git commit: {e}"
+        }
+
+def git_get_modified_files(path: str = ".") -> List[str]:
+    """
+    Returns a list of files modified in the current working tree.
+    """
+    try:
+        # Use git status to get staged and unstaged changes
+        res = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        files = []
+        for line in res.stdout.splitlines():
+            # Line format is 'XY path' where X is staged and Y is unstaged
+            # Extract path, which starts at index 3
+            files.append(line[3:].strip())
+        return list(set(files))
+    except Exception:
+        return []
 
 def should_include_repo_map(goal: str) -> bool:
     """

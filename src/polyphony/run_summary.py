@@ -21,31 +21,42 @@ class RunSummary:
 
     def to_markdown(self) -> str:
         duration = self.end_time - self.start_time if self.end_time else "N/A"
-        
+
         md = f"# Polyphony Agent Run Summary\n\n"
         md += f"**Goal:** {self.goal}\n"
         md += f"**Start Time:** {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
         md += f"**Duration:** {duration}\n\n"
-        
+
         md += "## Execution Overview\n\n"
         total_tasks = len(self.tasks)
         successful_tasks = sum(1 for r in self.results if r.success)
         md += f"- **Total Tasks:** {total_tasks}\n"
         md += f"- **Successful Tasks:** {successful_tasks}\n"
         md += f"- **Status:** {'✅ Success' if successful_tasks == total_tasks and total_tasks > 0 else '❌ Partial/Failure'}\n\n"
-        
+
         md += "## Task Breakdown\n\n"
         for i, (task, result) in enumerate(zip(self.tasks, self.results)):
             status_emoji = "✅" if result.success else "❌"
             md += f"### {i+1}. {task.description} ({task.id}) {status_emoji}\n\n"
-            
-            md += f"**Agent Model:** `{result.agent_model or 'unknown'}`\n\n"
-            
+
+            md += f"**Agent Model:** `{result.agent_model}`\n"
+            if result.duration:
+                md += f"**Task Duration:** {result.duration:.2f}s\n"
+
+            if result.commit_hash:
+                md += f"**Commit Hash:** `{result.commit_hash[:7]}`\n"
+
+            if result.files_changed:
+                md += "**Files Modified:**\n"
+                for f in result.files_changed:
+                    md += f"- `{f}`\n"
+                md += "\n"
+
             if result.error:
                 md += f"**Error:** {result.error}\n\n"
-            
+
             if result.history:
-                md += "#### Process History\n\n"
+                md += "<details>\n<summary><b>Process History</b></summary>\n\n"
                 for action in result.history:
                     if action.action_type == "thought":
                         md += f"> **Thought:** {action.content}\n\n"
@@ -55,14 +66,15 @@ class RunSummary:
                         if args_str:
                             md += f"```json\n{args_str}\n```\n"
                     elif action.action_type == "tool_result":
-                        md += f"📥 **Tool Result:**\n```\n{action.content}\n```\n\n"
-            
+                        md += f"📥 **Tool Result:**\n```\n{action.content[:500]}{'...' if len(action.content) > 500 else ''}\n```\n\n"
+                md += "</details>\n\n"
+
             if result.verification_output:
                 md += "#### Verification Output\n\n"
                 md += f"```\n{result.verification_output}\n```\n\n"
-                
+
             md += "---\n\n"
-            
+
         return md
 
     def save(self, directory: str = "."):

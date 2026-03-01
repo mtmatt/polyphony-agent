@@ -26,6 +26,9 @@ class AgentResult(BaseModel):
     error: Optional[str] = None
     history: List[AgentAction] = []
     verification_output: Optional[str] = None
+    duration: Optional[float] = None
+    commit_hash: Optional[str] = None
+    files_changed: List[str] = []
 
 class BaseAgent(ABC):
     @property
