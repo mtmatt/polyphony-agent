@@ -207,9 +207,6 @@ class Orchestrator:
             
             # 4. Filter out completed tasks
             remaining_tasks = [t for t in tasks if t.status != "completed"]
-            console.print(f"[debug] All tasks: {[t.id for t in tasks]}")
-            console.print(f"[debug] Task statuses: {[(t.id, t.status) for t in tasks]}")
-            console.print(f"[debug] Remaining tasks: {[t.id for t in remaining_tasks]}")
             
             if len(remaining_tasks) < len(tasks):
                 console.print(f"[dim]Skipping {len(tasks) - len(remaining_tasks)} completed tasks for this goal.[/dim]")
@@ -228,7 +225,6 @@ class Orchestrator:
                 console=console,
                 transient=True
             ) as progress:
-                console.print(f"[debug] Inside Progress block. Remaining tasks: {len(remaining_tasks)}")
                 global_task = progress.add_task("[blue]Overall Progress", total=len(tasks))
                 # Advance for completed tasks
                 progress.advance(global_task, len(tasks) - len(remaining_tasks))
@@ -239,7 +235,6 @@ class Orchestrator:
                 else:
                     task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
                     for task in remaining_tasks:
-                        console.print(f"[debug] Executing task: {task.id}")
                         await self.execute_with_verification(task, progress, global_task, task_layer)
                         progress.advance(global_task)
                         # Save checkpoint after each task
@@ -316,17 +311,42 @@ class Orchestrator:
             # asyncio.gather allows parallel execution of all tasks in the current batch
             await asyncio.gather(*(run_task(task) for task in batch))
 
+    def _get_history_context(self) -> str:
+        """Aggregates results of completed tasks into a context string."""
+        if not self.run_summary or not self.run_summary.results:
+            return ""
+        
+        history_parts = ["\n[COMPLETED TASKS HISTORY]"]
+        # Only include successful results
+        for res in self.run_summary.results:
+            if res.success:
+                part = f"Task: {res.task_id}\nResult: {res.output}"
+                if res.files_changed:
+                    part += f"\nFiles modified: {', '.join(res.files_changed)}"
+                history_parts.append(part)
+        
+        if len(history_parts) == 1: # Only header
+            return ""
+            
+        return "\n---\n".join(history_parts)
+
     async def execute_with_verification(self, task: AgentTask, progress: Progress, global_task, task_layer):
         """
         Executes a task and verifies it using a verification command if provided.
         """
+        # If the task was previously failed, reset its retry count on resume
+        if self._is_resumed and task.status == "failed":
+            task.retry_count = 0
+            
         task.status = "in-progress"
         progress.update(task_layer, completed=0, description=f"[cyan]Executing: {task.id}")
         
         # Recursive check: if the task needs more planning
         if task.agent_type == 'planner':
             progress.update(task_layer, completed=50, description=f"[cyan]Recursing: {task.id}")
-            await self.run_goal(task.description, context=task.context or "")
+            # Add historical context to recursive goal
+            history = self._get_history_context()
+            await self.run_goal(task.description, context=f"{task.context or ''}\n{history}")
             task.status = "completed"
             progress.update(task_layer, completed=100)
             return
@@ -348,9 +368,19 @@ class Orchestrator:
                 # Step 1: Execute using the selected agent
                 progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking ({agent.model_name}): {task.id}")
                 
+                # Enrich task context with history of previous tasks
+                history = self._get_history_context()
+                original_task_context = task.context
+                if history:
+                    # Temporary update context for this attempt
+                    task.context = f"{original_task_context or ''}\n{history}"
+
                 start_time = time.time()
                 # Wrap blocking execution in a thread
                 result = await asyncio.to_thread(agent.execute_task, task, lambda p: progress.update(task_layer, completed=p))
+                
+                # Restore original task context
+                task.context = original_task_context
                 result.duration = time.time() - start_time
                 
                 result.agent_model = getattr(agent, "model_name", "unknown")
