@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 import subprocess
 import time
+import asyncio
 import concurrent.futures
 from threading import Lock
 from rich.console import Console
@@ -11,6 +12,38 @@ from .run_summary import RunSummary
 from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
 
 console = Console()
+
+class DependencyResolver:
+    """Groups tasks into batches that can be executed in parallel."""
+    @staticmethod
+    def resolve(tasks: List[AgentTask]) -> List[List[AgentTask]]:
+        """
+        Resolves the dependency graph and returns a list of batches.
+        Each batch contains tasks that can be executed in parallel.
+        """
+        batches = []
+        pending_tasks = {t.id: t for t in tasks}
+        completed_ids = set()
+
+        while pending_tasks:
+            current_batch = []
+            for tid, task in list(pending_tasks.items()):
+                # Check if all dependencies (both field names) are met
+                deps = set(task.depends_on) | set(task.dependencies)
+                if all(dep in completed_ids for dep in deps):
+                    current_batch.append(task)
+            
+            if not current_batch:
+                # Circular dependency or missing dependency
+                remaining = list(pending_tasks.keys())
+                raise ValueError(f"Circular dependency detected or unmet dependencies: {remaining}")
+            
+            batches.append(current_batch)
+            for task in current_batch:
+                completed_ids.add(task.id)
+                del pending_tasks[task.id]
+        
+        return batches
 
 class Orchestrator:
     def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False):
@@ -37,14 +70,14 @@ class Orchestrator:
         
         return get_repo_map(include_only=include_only)
 
-    def run_goal(self, goal: str, context: str = ""):
+    async def run_goal(self, goal: str, context: str = ""):
         self.run_summary = RunSummary(goal)
         console.print(f"\n[bold blue]>>> Orchestrating goal: {goal}[/bold blue]")
         
         # 1. Classify the goal
         is_simple = False
         if hasattr(self.planner, 'classify_goal'):
-            classification = self.planner.classify_goal(goal)
+            classification = await asyncio.to_thread(self.planner.classify_goal, goal)
             is_simple = (classification == "simple")
             console.print(f"[dim]Goal classified as: {classification}[/dim]")
         
@@ -77,7 +110,7 @@ class Orchestrator:
                 console.print(f"[dim]Executing simple goal directly.[/dim]")
             else:
                 if hasattr(self.planner, 'decompose_goal'):
-                    tasks = self.planner.decompose_goal(goal)
+                    tasks = await asyncio.to_thread(self.planner.decompose_goal, goal)
                 else:
                     tasks = [AgentTask(id="fallback_task", description=goal, agent_type="executor")]
                 console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
@@ -96,11 +129,11 @@ class Orchestrator:
                 
                 if self.parallel and len(tasks) > 1:
                     console.print(f"[dim]Executing tasks in parallel (Max 4 workers).[/dim]")
-                    self._execute_parallel(tasks, progress, global_task)
+                    await self._execute_parallel(tasks, progress, global_task)
                 else:
                     task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
                     for task in tasks:
-                        self.execute_with_verification(task, progress, global_task, task_layer)
+                        await self.execute_with_verification(task, progress, global_task, task_layer)
                         progress.advance(global_task)
         finally:
             # Restore models
@@ -110,73 +143,48 @@ class Orchestrator:
         # Finalize and report summary
         summary_path = self.run_summary.save()
         console.print(f"\n[bold green]Goal execution complete![/bold green]")
-        console.print(f"[bold cyan]Run Summary Document:[/bold cyan] {summary_path}")
+        console.print(f"[bold cyan]Run Summary:[/bold cyan] {summary_path}")
+        
+        # Show brief summary
+        total = len(self.run_summary.tasks)
+        successful = sum(1 for r in self.run_summary.results if r.success)
+        if successful == total and total > 0:
+            console.print(f"[green][OK] All {total} task(s) completed successfully[/green]")
+            console.print(f"[dim]Documentation updated in GEMINI.md and README.md[/dim]")
+        else:
+            console.print(f"[yellow][WARNING] {successful}/{total} task(s) completed[/yellow]")
 
-    def _execute_parallel(self, tasks: List[AgentTask], progress: Progress, global_task):
+    async def _execute_parallel(self, tasks: List[AgentTask], progress: Progress, global_task):
         """
-        Executes tasks in parallel while respecting dependencies.
+        Executes tasks in parallel while respecting dependencies by grouping them into batches.
+        Uses asyncio.gather for processing batches of independent tasks with a concurrency limit.
         """
-        completed_task_ids = set()
-        pending_tasks = {t.id: t for t in tasks}
-        running_futures = {}
-        
-        # Create dedicated task layers for parallel tasks
-        active_task_layers = {}
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            while pending_tasks or running_futures:
-                # 1. Identify tasks whose dependencies are met
-                to_submit = []
-                with self._lock:
-                    for tid, task in list(pending_tasks.items()):
-                        if all(dep in completed_task_ids for dep in task.dependencies):
-                            to_submit.append(task)
-                            del pending_tasks[tid]
-                
-                # 2. Submit new tasks
-                for task in to_submit:
+        try:
+            batches = DependencyResolver.resolve(tasks)
+        except ValueError as e:
+            console.print(f"[bold red]Planning Error: {e}[/bold red]")
+            return
+
+        semaphore = asyncio.Semaphore(4)
+
+        for batch in batches:
+            async def run_task(task):
+                async with semaphore:
                     # Add a progress layer for this specific task
                     layer = progress.add_task(f"[cyan]Task: {task.id}", total=100)
-                    active_task_layers[task.id] = layer
-                    
-                    # Wrap execute_with_verification to work in a thread
-                    future = executor.submit(
-                        self.execute_with_verification, 
-                        task, progress, global_task, layer
-                    )
-                    running_futures[future] = task.id
-                
-                if not running_futures:
-                    if pending_tasks:
-                        # Deadlock or circular dependency
-                        remaining = [t.id for t in pending_tasks.values()]
-                        console.print(f"[bold red]Circular dependency detected or unmet dependencies: {remaining}[/bold red]")
-                        break
-                    break
-
-                # 3. Wait for at least one task to finish
-                done, _ = concurrent.futures.wait(
-                    running_futures.keys(), 
-                    return_when=concurrent.futures.FIRST_COMPLETED
-                )
-                
-                for future in done:
-                    tid = running_futures.pop(future)
-                    with self._lock:
-                        completed_task_ids.add(tid)
-                    
-                    # Cleanup the progress layer
-                    if tid in active_task_layers:
-                        progress.remove_task(active_task_layers[tid])
-                    
-                    progress.advance(global_task)
-                    
                     try:
-                        future.result() # Propagate exceptions if any
+                        await self.execute_with_verification(task, progress, global_task, layer)
                     except Exception as e:
-                        console.print(f"[bold red]Task {tid} failed with exception: {e}[/bold red]")
+                        console.print(f"[bold red]Task {task.id} failed with exception: {e}[/bold red]")
+                    finally:
+                        # Cleanup the progress layer
+                        progress.remove_task(layer)
+                        progress.advance(global_task)
 
-    def execute_with_verification(self, task: AgentTask, progress: Progress, global_task, task_layer):
+            # asyncio.gather allows parallel execution of all tasks in the current batch
+            await asyncio.gather(*(run_task(task) for task in batch))
+
+    async def execute_with_verification(self, task: AgentTask, progress: Progress, global_task, task_layer):
         """
         Executes a task and verifies it using a verification command if provided.
         """
@@ -185,7 +193,7 @@ class Orchestrator:
         # Recursive check: if the task needs more planning
         if task.agent_type == 'planner':
             progress.update(task_layer, completed=50, description=f"[cyan]Recursing: {task.id}")
-            self.run_goal(task.description, context=task.context or "")
+            await self.run_goal(task.description, context=task.context or "")
             progress.update(task_layer, completed=100)
             return
 
@@ -207,7 +215,8 @@ class Orchestrator:
                 progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking ({agent.model_name}): {task.id}")
                 
                 start_time = time.time()
-                result = agent.execute_task(task, progress=lambda p: progress.update(task_layer, completed=p))
+                # Wrap blocking execution in a thread
+                result = await asyncio.to_thread(agent.execute_task, task, lambda p: progress.update(task_layer, completed=p))
                 result.duration = time.time() - start_time
                 
                 result.agent_model = getattr(agent, "model_name", "unknown")
@@ -215,7 +224,7 @@ class Orchestrator:
                 
                 # Capture modified files before commit
                 if is_git_repo():
-                    result.files_changed = git_get_modified_files()
+                    result.files_changed = await asyncio.to_thread(git_get_modified_files)
 
                 if not result.success:
                     task.retry_count += 1
@@ -227,7 +236,8 @@ class Orchestrator:
                 # Step 2: Verify
                 if task.verification_command:
                     progress.update(task_layer, completed=75, description=f"[cyan]Verifying: {task.id}")
-                    verify_result = subprocess.run(
+                    verify_result = await asyncio.to_thread(
+                        subprocess.run,
                         task.verification_command,
                         shell=True,
                         capture_output=True,
@@ -240,8 +250,8 @@ class Orchestrator:
                         # Step 3: Git Commit (Optional)
                         if self.auto_commit and is_git_repo():
                             progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                            commit_msg = agent.generate_commit_message(result)
-                            git_res_dict = git_commit(commit_msg)
+                            commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
+                            git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
                             if git_res_dict.get("success"):
                                 result.commit_hash = git_res_dict.get("commit_hash")
                                 console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
@@ -262,8 +272,8 @@ class Orchestrator:
                     # No verification command, assume success if execution was successful
                     if self.auto_commit and is_git_repo():
                         progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                        commit_msg = agent.generate_commit_message(result)
-                        git_res_dict = git_commit(commit_msg)
+                        commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
+                        git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
                         if git_res_dict.get("success"):
                             result.commit_hash = git_res_dict.get("commit_hash")
                             console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")

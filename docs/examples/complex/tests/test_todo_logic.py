@@ -441,18 +441,31 @@ def test_save_to_file_atomic_behavior(tmp_path):
     
     # We want to track calls to important functions
     with (
-        patch("tempfile.NamedTemporaryFile", wraps=tempfile.NamedTemporaryFile) as mock_ntf,
+        patch("tempfile.mkstemp") as mock_mkstemp,
+        patch("os.fdopen", create=True) as mock_fdopen,
         patch("os.fsync") as mock_fsync,
         patch("os.replace") as mock_replace,
         patch("shutil.copymode") as mock_copymode
     ):
+        # Mock mkstemp to return (fd, path)
+        temp_fd = 999
+        temp_path_str = str(target_path) + ".tmp"
+        mock_mkstemp.return_value = (temp_fd, temp_path_str)
+        
+        # Mock fdopen to return a context manager
+        mock_file = MagicMock()
+        mock_file.fileno.return_value = temp_fd
+        mock_fdopen.return_value.__enter__.return_value = mock_file
+        
         tl.save_to_file(target_path)
         
-        # 1. Verify NamedTemporaryFile was called with correct directory
-        mock_ntf.assert_called_once()
-        args, kwargs = mock_ntf.call_args
+        # 1. Verify mkstemp was called with correct directory
+        mock_mkstemp.assert_called_once()
+        args, kwargs = mock_mkstemp.call_args
         assert kwargs["dir"] == target_path.parent
-        assert kwargs["delete"] is False
+        
+        # 2. Verify fdopen was called
+        mock_fdopen.assert_called_once_with(temp_fd, 'w', encoding='utf-8')
         
         # 3. Verify fsync was called
         mock_fsync.assert_called_once()
@@ -470,28 +483,28 @@ def test_save_to_file_cleanup_on_failure(tmp_path):
     
     # Mocking os.fsync to raise an exception
     with (
+        patch("tempfile.mkstemp") as mock_mkstemp,
+        patch("os.fdopen") as mock_fdopen,
         patch("os.fsync", side_effect=Exception("Disk full")),
-        patch("os.replace") as mock_replace
+        patch("os.replace") as mock_replace,
+        patch("os.path.exists", return_value=True),
+        patch("os.remove") as mock_remove
     ):
-        # We need to capture the temp file path to check if it's deleted
-        temp_file_path = None
+        temp_fd = 999
+        temp_path = str(target_path) + ".tmp"
+        mock_mkstemp.return_value = (temp_fd, temp_path)
         
-        original_ntf = tempfile.NamedTemporaryFile
-        def side_effect(*args, **kwargs):
-            nonlocal temp_file_path
-            f = original_ntf(*args, **kwargs)
-            temp_file_path = f.name
-            return f
-            
-        with patch("tempfile.NamedTemporaryFile", side_effect=side_effect):
-            try:
-                tl.save_to_file(target_path)
-            except Exception as e:
-                assert str(e) == "Disk full"
+        mock_file = MagicMock()
+        mock_file.fileno.return_value = temp_fd
+        mock_fdopen.return_value.__enter__.return_value = mock_file
+        
+        try:
+            tl.save_to_file(target_path)
+        except Exception as e:
+            assert str(e) == "Disk full"
         
         # Verify replace was NEVER called
         mock_replace.assert_not_called()
         
         # Verify temp file was cleaned up
-        assert temp_file_path is not None
-        assert not os.path.exists(temp_file_path)
+        mock_remove.assert_called_once_with(temp_path)

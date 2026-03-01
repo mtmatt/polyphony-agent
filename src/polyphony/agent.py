@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Any, Dict
 
 class AgentTask(BaseModel):
@@ -12,6 +12,17 @@ class AgentTask(BaseModel):
     verification_command: Optional[str] = None # e.g., "pytest" or "python my_script.py"
     retry_count: int = 0
     max_retries: int = 2
+    depends_on: List[str] = [] # List of task IDs that must be completed before this task
+    dependencies: List[str] = [] # Backward compatibility
+
+    @model_validator(mode="after")
+    def sync_dependencies(self) -> "AgentTask":
+        """Sync depends_on and dependencies."""
+        if not self.depends_on and self.dependencies:
+            self.depends_on = self.dependencies
+        elif self.depends_on and not self.dependencies:
+            self.dependencies = self.depends_on
+        return self
 
 class AgentAction(BaseModel):
     action_type: str  # thought, tool_call, tool_result

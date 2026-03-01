@@ -3,6 +3,7 @@ import json
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from .agent import BaseAgent, AgentTask, AgentResult
+from .utils import extract_json
 
 from .config import MCPServerConfig
 
@@ -56,11 +57,8 @@ class GeminiAgent(BaseAgent):
             )
             
             output = result.stdout
-            start = output.find('{')
-            end = output.rfind('}') + 1
-            if start != -1 and end != -1:
-                outer_json_data = output[start:end]
-                outer_json = json.loads(outer_json_data)
+            outer_json = extract_json(output)
+            if outer_json:
                 model_response = outer_json.get('response', '').strip().lower()
                 if "complex" in model_response:
                     return "complex"
@@ -79,10 +77,11 @@ class GeminiAgent(BaseAgent):
             f"Given the goal: '{goal}', decompose it into a sequence of sub-tasks. "
             f"Current context: '{self.context}'. "
             "Output the tasks in a JSON format matching this structure: "
-            "{\"tasks\": [{\"id\": \"task1\", \"description\": \"...\", \"context\": \"...\", \"agent_type\": \"...\", \"verification_command\": \"...\"}]}. "
+            "{\"tasks\": [{\"id\": \"task1\", \"description\": \"...\", \"context\": \"...\", \"agent_type\": \"...\", \"verification_command\": \"...\", \"depends_on\": [\"task_id_1\"]}]}. "
             "agent_type should be 'planner' if the task is highly complex and requires its own structured sub-tasks, "
             "or 'executor' if it's a specific action or a complex task that a single agent can handle with multiple tool calls. "
             "verification_command should be a shell command (e.g., 'pytest', 'python my_script.py', 'ls -R') that can be run to verify the task's success. "
+            "depends_on should be a list of task IDs that must be completed before the current task can start. "
             "Be conservative in using 'planner' – only use it for very large goals that genuinely need hierarchy. "
             "Prefer 'executor' for most technical tasks as the executor is already capable of multi-step tool use. "
             "Only output the JSON object, nothing else."
@@ -99,22 +98,17 @@ class GeminiAgent(BaseAgent):
             
             # Extract JSON from output. gemini outputs logs and then the JSON.
             output = result.stdout
-            start = output.find('{')
-            end = output.rfind('}') + 1
-            if start != -1 and end != -1:
-                outer_json_data = output[start:end]
-                outer_json = json.loads(outer_json_data)
-                
+            outer_json = extract_json(output)
+            
+            if outer_json:
                 # The actual response from the model is in outer_json['response']
                 model_response = outer_json.get('response', '')
                 
                 # The model response should contain the tasks JSON.
-                # Extract it again in case the model added some text around it.
-                task_start = model_response.find('{')
-                task_end = model_response.rfind('}') + 1
-                if task_start != -1 and task_end != -1:
-                    task_json_data = model_response[task_start:task_end]
-                    plan = Plan.model_validate_json(task_json_data)
+                # Use extract_json again to be safe.
+                task_data = extract_json(model_response)
+                if task_data and "tasks" in task_data:
+                    plan = Plan.model_validate(task_data)
                     return plan.tasks
                 else:
                     raise ValueError(f"Could not find JSON in model response: {model_response}")
@@ -154,11 +148,8 @@ class GeminiAgent(BaseAgent):
             )
             
             output = result.stdout
-            start = output.find('{')
-            end = output.rfind('}') + 1
-            if start != -1 and end != -1:
-                outer_json_data = output[start:end]
-                outer_json = json.loads(outer_json_data)
+            outer_json = extract_json(output)
+            if outer_json:
                 model_response = outer_json.get('response', '')
                 return AgentResult(task_id=task.id, success=True, output=model_response)
             else:
@@ -190,11 +181,8 @@ class GeminiAgent(BaseAgent):
             )
             
             output = sub_result.stdout
-            start = output.find('{')
-            end = output.rfind('}') + 1
-            if start != -1 and end != -1:
-                outer_json_data = output[start:end]
-                outer_json = json.loads(outer_json_data)
+            outer_json = extract_json(output)
+            if outer_json:
                 model_response = outer_json.get('response', '').strip()
                 return model_response
             else:

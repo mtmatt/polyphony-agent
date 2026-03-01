@@ -2,7 +2,8 @@ import subprocess
 import os
 import re
 import ast
-from typing import Optional, List
+import json
+from typing import Optional, List, Dict, Any
 
 def is_git_repo(path: str = ".") -> bool:
     try:
@@ -130,25 +131,99 @@ def run_command(command: str) -> str:
 def extract_relevant_dirs(text: str, path: str = ".") -> List[str]:
     """
     Extracts potential directory names from text that exist in the given path.
+    Also identifies parent directories of filenames mentioned in the text.
     """
-    relevant = []
+    relevant = set()
     try:
-        # Get all directories (excluding hidden and __pycache__)
+        # Get all directories and files (excluding hidden and __pycache__)
         all_dirs = []
-        for root, dirs, _ in os.walk(path):
+        all_files = {} # name -> rel_path
+        
+        for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
             rel_root = os.path.relpath(root, path)
+            
             if rel_root != '.':
                 all_dirs.append(rel_root)
+            
+            for f in files:
+                if not f.startswith('.'):
+                    rel_f = os.path.join(rel_root, f) if rel_root != '.' else f
+                    if f not in all_files:
+                        all_files[f] = []
+                    all_files[f].append(rel_f)
         
         text_lower = text.lower()
+        
+        # 1. Match directory names directly
         for d in all_dirs:
-            # Check if the directory name or the full relative path is in the text
             if d.lower() in text_lower or os.path.basename(d).lower() in text_lower:
-                relevant.append(d)
+                relevant.add(d)
+        
+        # 2. Match filenames and add their parent directories
+        for f_name, paths in all_files.items():
+            if f_name.lower() in text_lower:
+                for p in paths:
+                    parent = os.path.dirname(p)
+                    if parent and parent != '.':
+                        relevant.add(parent)
+                    elif not parent or parent == '.':
+                        # If it's in root, we might want to include root (which is always included in map usually)
+                        pass
+
+        # 3. Common keyword mappings
+        kw_map = {
+            "test": ["tests", "test"],
+            "doc": ["docs", "doc", "documentation"],
+            "src": ["src", "lib", "app"],
+            "requirement": ["docs", "requirements.txt"],
+            "config": ["config", "settings"]
+        }
+        
+        for kw, targets in kw_map.items():
+            if kw in text_lower:
+                for target in targets:
+                    for d in all_dirs:
+                        if target in d.lower() or target in os.path.basename(d).lower():
+                            relevant.add(d)
+                            
     except Exception:
         pass
-    return relevant
+    return list(relevant)
+
+def extract_json(text: str) -> Optional[dict]:
+    """
+    Robustly extracts a JSON object from text that may contain other content.
+    Handles markdown code blocks and introductory/concluding text.
+    """
+    # 1. Try to find content within triple backticks
+    json_match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+    if json_match:
+        try:
+            return json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            pass
+    
+    # 2. Try to find anything between { and }
+    # Use non-greedy match and find all to handle multiple JSON-like objects
+    # but we usually want the largest/outermost one if possible.
+    # A simple approach is finding the first '{' and the last '}'
+    start = text.find('{')
+    end = text.rfind('}') + 1
+    if start != -1 and end != -1:
+        json_str = text[start:end]
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            # If direct parsing fails, try to clean it up (e.g., stripping markdown if any)
+            # This is a fallback for very messy outputs
+            cleaned = re.sub(r"```[a-zA-Z]*", "", json_str).strip()
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                pass
+    
+    return None
 
 def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> str:
     """
@@ -166,7 +241,7 @@ def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> s
             if include_only and rel_root != '.':
                 is_relevant = False
                 for pattern in include_only:
-                    if rel_root.startswith(pattern) or pattern.startswith(rel_root):
+                    if rel_root == pattern or rel_root.startswith(pattern + os.sep) or pattern.startswith(rel_root + os.sep):
                         is_relevant = True
                         break
                 if not is_relevant:
@@ -192,25 +267,53 @@ def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> s
                         with open(file_path, 'r', encoding='utf-8') as file_content:
                             tree = ast.parse(file_content.read())
                             
-                            classes = []
-                            functions = []
+                            symbol_indent = ' ' * 4 * (level + 2)
                             
                             for node in tree.body:
                                 if isinstance(node, ast.ClassDef):
-                                    classes.append(node.name)
-                                    # Include methods in the same functions list for simplicity in repo map
+                                    bases = ""
+                                    if node.bases:
+                                        base_names = []
+                                        for base in node.bases:
+                                            if isinstance(base, ast.Name):
+                                                base_names.append(base.id)
+                                            elif isinstance(base, ast.Attribute):
+                                                base_names.append(f"{base.value.id}.{base.attr}")
+                                        if base_names:
+                                            bases = f"({', '.join(base_names)})"
+                                    
+                                    repo_map.append(f"{symbol_indent}Class {node.name}{bases}")
+                                    
+                                    # Docstring
+                                    doc = ast.get_docstring(node)
+                                    if doc:
+                                        first_line = doc.strip().split('\n')[0]
+                                        repo_map.append(f"{symbol_indent}    \"\"\"{first_line}\"\"\"")
+
+                                    # Methods
                                     for subnode in node.body:
                                         if isinstance(subnode, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                            functions.append(subnode.name)
+                                            # Skip private methods if they don't seem high-signal
+                                            if subnode.name.startswith('_') and not (subnode.name.startswith('__') and subnode.name.endswith('__')):
+                                                continue
+                                            
+                                            args = [arg.arg for arg in subnode.args.args]
+                                            sig = f"{subnode.name}({', '.join(args)})"
+                                            repo_map.append(f"{symbol_indent}    Method {sig}")
+                                            
                                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                    functions.append(node.name)
-                            
-                            if classes or functions:
-                                symbol_indent = ' ' * 4 * (level + 2)
-                                if classes:
-                                    repo_map.append(f"{symbol_indent}Classes: {', '.join(classes)}")
-                                if functions:
-                                    repo_map.append(f"{symbol_indent}Functions: {', '.join(functions)}")
+                                    # Skip private functions
+                                    if node.name.startswith('_'):
+                                        continue
+                                        
+                                    args = [arg.arg for arg in node.args.args]
+                                    sig = f"{node.name}({', '.join(args)})"
+                                    repo_map.append(f"{symbol_indent}Function {sig}")
+                                    
+                                    doc = ast.get_docstring(node)
+                                    if doc:
+                                        first_line = doc.strip().split('\n')[0]
+                                        repo_map.append(f"{symbol_indent}    \"\"\"{first_line}\"\"\"")
                     except Exception:
                         pass # Skip if file cannot be read or parsed
         

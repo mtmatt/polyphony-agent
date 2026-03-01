@@ -33,7 +33,8 @@ def test_git_commit_success(temp_repo):
     file_path.write_text("content")
     
     result = git_commit("Test commit", path=str(temp_repo))
-    assert "Committed: Test commit" in result
+    assert result["success"] is True
+    assert "Committed: Test commit" in result["message"]
     
     # Verify commit
     log = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=temp_repo, capture_output=True, text=True, check=True)
@@ -41,7 +42,8 @@ def test_git_commit_success(temp_repo):
 
 def test_git_commit_no_changes(temp_repo):
     result = git_commit("No changes", path=str(temp_repo))
-    assert "No changes to commit." in result
+    assert result["success"] is True
+    assert "No changes to commit." in result["message"]
 
 def test_git_commit_error(tmp_path):
     # Directory that is NOT a git repo
@@ -52,5 +54,6 @@ def test_git_commit_error(tmp_path):
     # tmp_path should be safe.
     
     result = git_commit("Failing commit", path=str(non_repo))
-    assert "Git error:" in result
-    assert "not a git repository" in result
+    assert result["success"] is False
+    assert "Git error:" in result["message"]
+    assert "not a git repository" in result["message"]

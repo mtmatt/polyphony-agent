@@ -1,6 +1,8 @@
 import argparse
 import sys
 import os
+import asyncio
+from typing import List, Optional
 from rich.console import Console
 from .gemini_agent import GeminiAgent
 from .openai_agent import OpenAIAgent
@@ -92,7 +94,7 @@ def main():
             sys.exit(1)
 
     try:
-        orchestrator.run_goal(args.goal, context=spec_context)
+        asyncio.run(orchestrator.run_goal(args.goal, context=spec_context))
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
         sys.exit(1)

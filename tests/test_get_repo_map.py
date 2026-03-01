@@ -28,11 +28,12 @@ def test_get_repo_map_basic(temp_project):
     # print(repo_map)
     assert "src/" in repo_map
     assert "main.py" in repo_map
-    assert "Classes: Main" in repo_map
-    assert "Functions: run, helper" in repo_map
+    assert "Class Main" in repo_map
+    assert "Method run(self)" in repo_map
+    assert "Function helper()" in repo_map
     assert "tests/" in repo_map
     assert "test_main.py" in repo_map
-    assert "Functions: test_run" in repo_map
+    assert "Function test_run()" in repo_map
     assert "docs/" in repo_map
     assert "index.md" in repo_map
 
@@ -47,8 +48,9 @@ def test_get_repo_map_filtering(temp_project):
 def test_get_repo_map_ast_symbols(temp_project):
     repo_map = get_repo_map(str(temp_project))
     # print(repo_map)
-    # AST should find 'run' even though it's indented
-    assert "Functions: run, helper" in repo_map
+    # AST should find 'run' and 'helper' with their signatures
+    assert "Method run(self)" in repo_map
+    assert "Function helper()" in repo_map
 
 def test_extract_relevant_dirs(temp_project):
     # Test matching directory name
@@ -58,6 +60,18 @@ def test_extract_relevant_dirs(temp_project):
     # Test matching file path parts
     relevant = extract_relevant_dirs("Update tests/test_main.py", str(temp_project))
     assert "tests" in relevant
+
+    # NEW: Test matching filename and getting parent dir
+    relevant = extract_relevant_dirs("Refine main.py", str(temp_project))
+    assert "src" in relevant
+
+    # NEW: Test keyword mapping (test -> tests)
+    relevant = extract_relevant_dirs("Run some tests", str(temp_project))
+    assert "tests" in relevant
+
+    # NEW: Test keyword mapping (doc -> docs)
+    relevant = extract_relevant_dirs("Update documentation", str(temp_project))
+    assert "docs" in relevant
 
     # Test no match
     relevant = extract_relevant_dirs("Hello world", str(temp_project))

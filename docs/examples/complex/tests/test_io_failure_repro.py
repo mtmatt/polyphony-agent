@@ -21,12 +21,12 @@ def test_add_task_disk_full_repro(tmp_path, capsys, monkeypatch):
         with patch("models.os.fsync") as mock_fsync:
             mock_fsync.side_effect = OSError(errno.ENOSPC, "No space left on device")
             
-            # Verify that the CLI currently crashes with OSError (traceback)
-            # rather than exiting gracefully with SystemExit.
-            with pytest.raises(OSError) as excinfo:
+            # Verify that the CLI now exits gracefully with SystemExit
+            # instead of crashing with a traceback.
+            with pytest.raises(SystemExit) as excinfo:
                 main()
             
-            assert excinfo.value.errno == errno.ENOSPC
+            assert excinfo.value.code == 1
             
             # In the current state, it prints the error but then re-raises it
             captured = capsys.readouterr()

@@ -122,9 +122,10 @@ class OpenAIAgent(BaseAgent):
             f"Given the goal: '{goal}', decompose it into a sequence of sub-tasks. "
             f"Current context: '{self.context}'. "
             "Output the tasks in a JSON format matching this structure: "
-            "{\"tasks\": [{\"id\": \"task1\", \"description\": \"...\", \"context\": \"...\", \"agent_type\": \"...\", \"verification_command\": \"...\"}]}. "
+            "{\"tasks\": [{\"id\": \"task1\", \"description\": \"...\", \"context\": \"...\", \"agent_type\": \"...\", \"verification_command\": \"...\", \"depends_on\": [\"task_id_1\"]}]}. "
             "agent_type should be 'planner' if the task is complex and needs its own sub-tasks, or 'executor' if it's a direct action. "
             "verification_command should be a shell command (e.g., 'pytest', 'python my_script.py', 'ls -R') that can be run to verify the task's success. "
+            "depends_on should be a list of task IDs that must be completed before the current task can start. "
             "Be aggressive in using 'planner' for any task that has multiple steps. "
             "Only output the JSON object, nothing else."
         )
