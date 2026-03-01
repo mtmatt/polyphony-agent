@@ -228,6 +228,7 @@ class Orchestrator:
                 console=console,
                 transient=True
             ) as progress:
+                console.print(f"[debug] Inside Progress block. Remaining tasks: {len(remaining_tasks)}")
                 global_task = progress.add_task("[blue]Overall Progress", total=len(tasks))
                 # Advance for completed tasks
                 progress.advance(global_task, len(tasks) - len(remaining_tasks))
