@@ -239,6 +239,7 @@ class Orchestrator:
                 else:
                     task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
                     for task in remaining_tasks:
+                        console.print(f"[debug] Executing task: {task.id}")
                         await self.execute_with_verification(task, progress, global_task, task_layer)
                         progress.advance(global_task)
                         # Save checkpoint after each task
