@@ -69,7 +69,7 @@ class TestUserPreference:
             confidence=0.85,
             evidence_count=5,
         )
-        assert pref.category == "naming_case"
+        assert pref.category == "naming_convention"
         assert pref.preference == "snake_case"
         assert pref.confidence == 0.85
         assert pref.evidence_count == 5
@@ -332,7 +332,7 @@ class TestMemoryAugmentedPrompt:
             ["Use secure tokens"]
         )
         memory_store.save_user_preference(
-            UserPreference("naming_convention", "snake_case", 0.9)
+            UserPreference(category="naming_convention", preference="snake_case", confidence=0.9)
         )
 
         # Create prompt builder

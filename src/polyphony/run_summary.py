@@ -119,8 +119,11 @@ class RunSummary:
         
         if successful_tasks == total_tasks and total_tasks > 0:
             summary += "**Completed Tasks:**\n"
+            seen_descriptions = set()
             for task in self.tasks:
-                summary += f"- {task.description}\n"
+                if task.description not in seen_descriptions:
+                    seen_descriptions.add(task.description)
+                    summary += f"- {task.description}\n"
         
         return summary
 

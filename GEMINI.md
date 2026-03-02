@@ -148,6 +148,27 @@ The system now supports extended execution sessions with configurable duration l
 
 # Recent Runs
 
+### Run: These simple goal record inside the gemini.md is not needed, also, the agent doing the same task for multiple times. Fix it
+
+- **Date:** 2026-03-02
+- **Duration:** 0:48:44.090323
+- **Status:** [SUCCESS]
+- **Total Cost:** $0.0019
+- **Tasks Completed:** 11/11
+
+**Completed Tasks:**
+- Investigate `src/polyphony/run_summary.py`, `src/polyphony/engine.py`, and `src/polyphony/agent.py` to understand how run summaries are generated and why 'simple goal' runs are recorded and tasks are duplicated.
+- Remove all existing 'simple goal' run entries from `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
+- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
+- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
+- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
+- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
+
 ### Run: Continue your work
 
 - **Date:** 2026-03-02
