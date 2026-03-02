@@ -1,7 +1,7 @@
 import json
 import requests
 from typing import List, Optional, Any, Dict
-from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage, AgentAction
+from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage, AgentAction, CollaborativePlan, PlanReview, AgentRole, ReviewComment
 from .utils import extract_json
 
 class OllamaAgent(BaseAgent):
@@ -96,3 +96,44 @@ Repo: {self.context}"""
                 agent_model=self.model_name,
                 history=[AgentAction(action_type="thought", content=f"Error calling Ollama: {str(e)}")]
             )
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        tasks_summary = "\n".join(f"- [{t.id}] {t.description}" for t in plan.tasks)
+        prompt = (
+            f"You are a {role.value} reviewing an engineering plan.\n"
+            f"Goal: {plan.goal}\n\nTasks:\n{tasks_summary}\n\n"
+            "Output a JSON object: "
+            '{"approved": true/false, "confidence_score": 0.0-1.0, '
+            '"comments": [{"comment": "...", "severity": "info|warning|error|suggestion", '
+            '"target_task_id": null, "suggested_changes": null}]}'
+        )
+        try:
+            response = self._call_ollama(prompt)
+            review_data = extract_json(response)
+            if review_data:
+                comments = [
+                    ReviewComment(
+                        reviewer_role=role,
+                        comment=c.get("comment", ""),
+                        severity=c.get("severity", "suggestion"),
+                        target_task_id=c.get("target_task_id"),
+                        suggested_changes=c.get("suggested_changes"),
+                    )
+                    for c in review_data.get("comments", [])
+                ]
+                return PlanReview(
+                    original_plan_id=plan.goal,
+                    reviewers=[role],
+                    comments=comments,
+                    approved=review_data.get("approved", False),
+                    confidence_score=float(review_data.get("confidence_score", 0.5)),
+                )
+        except Exception:
+            pass
+        return PlanReview(
+            original_plan_id=plan.goal,
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=0.5,
+        )

@@ -8,6 +8,7 @@ from rich.console import Console
 from .gemini_agent import GeminiAgent
 from .openai_agent import OpenAIAgent
 from .ollama_agent import OllamaAgent
+from .claude_agent import ClaudeAgent
 from .engine import Orchestrator
 from .config import load_config, AgentConfig, Config, MCPServerConfig
 from .checkpoint import RunCheckpoint
@@ -30,6 +31,13 @@ def create_agent(agent_config: AgentConfig, mcp_servers: Optional[List[MCPServer
             api_key=agent_config.api_key or os.environ.get("OPENAI_API_KEY"),
             base_url=agent_config.base_url
         )
+    elif agent_config.provider == "claude":
+        return ClaudeAgent(
+            model_name=agent_config.model or "claude-opus-4-5",
+            flash_model_name=agent_config.flash_model,
+            mcp_servers=mcp_servers,
+            sandbox=agent_config.sandbox
+        )
     elif agent_config.provider == "ollama":
         return OllamaAgent(
             model_name=agent_config.model or "llama3",
@@ -45,20 +53,20 @@ def main():
     parser = argparse.ArgumentParser(description="Polyphony Agent - 2026 CLI AI Standard")
     parser.add_argument("goal", nargs="?", help="The goal you want the agent to achieve.")
     parser.add_argument("--config", type=str, default="polyphony.toml", help="Path to the config file.")
-    parser.add_argument("--provider", type=str, choices=["gemini", "openai", "ollama"], help="Default AI provider.")
+    parser.add_argument("--provider", type=str, choices=["gemini", "openai", "claude", "ollama"], help="Default AI provider.")
     parser.add_argument("--model", type=str, help="Default model name.")
     parser.add_argument("--flash-model", type=str, help="Default flash model name.")
     parser.add_argument("--api-key", type=str, help="API key for the provider.")
     parser.add_argument("--base-url", type=str, help="Base URL for the provider API.")
     
     # Advanced options
-    parser.add_argument("--planner-provider", type=str, choices=["gemini", "openai", "ollama"], help="Provider for the planner agent.")
+    parser.add_argument("--planner-provider", type=str, choices=["gemini", "openai", "claude", "ollama"], help="Provider for the planner agent.")
     parser.add_argument("--planner-model", type=str, help="Model for the planner agent.")
     parser.add_argument("--planner-flash-model", type=str, help="Flash model for the planner agent.")
-    parser.add_argument("--executor-provider", type=str, choices=["gemini", "openai", "ollama"], help="Provider for the executor agent.")
+    parser.add_argument("--executor-provider", type=str, choices=["gemini", "openai", "claude", "ollama"], help="Provider for the executor agent.")
     parser.add_argument("--executor-model", type=str, help="Model for the executor agent.")
     parser.add_argument("--executor-flash-model", type=str, help="Flash model for the executor agent.")
-    parser.add_argument("--qa-provider", type=str, choices=["gemini", "openai", "ollama"], help="Provider for the QA agent.")
+    parser.add_argument("--qa-provider", type=str, choices=["gemini", "openai", "claude", "ollama"], help="Provider for the QA agent.")
     parser.add_argument("--qa-model", type=str, help="Model for the QA agent.")
     
     parser.add_argument("--auto-commit", action="store_true", default=None, help="Auto-commit successful tasks.")

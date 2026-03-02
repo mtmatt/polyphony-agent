@@ -20,3 +20,13 @@ api_key = "ollama"
 # Fallback: Flat structure (sets both planner and executor to same values)
 # provider = "gemini"
 # model = "gemini-2.5-flash-exp"
+
+# Claude CLI example (requires `claude` CLI installed and authenticated)
+# [planner]
+# provider = "claude"
+# model = "claude-opus-4-5"
+#
+# [executor]
+# provider = "claude"
+# model = "claude-sonnet-4-5"
+# flash_model = "claude-haiku-3-5"

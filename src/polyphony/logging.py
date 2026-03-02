@@ -128,7 +128,7 @@ def setup_logging(
     processors = [
         structlog.stdlib.filter_by_level,
         structlog.contextvars.merge_contextvars,
-        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.TimeStamper(fmt="iso", utc=False),
         structlog.stdlib.add_logger_name,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
@@ -147,7 +147,7 @@ def setup_logging(
     # 5. Shared pre-chain (runs before the per-handler renderer)
     foreign_pre_chain = [
         structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.TimeStamper(fmt="iso", utc=False),
         structlog.processors.add_log_level,
     ]
 
@@ -161,7 +161,7 @@ def setup_logging(
     elif console_format == "json":
         console_processors = [
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.TimeStamper(fmt="iso", utc=False),
             structlog.processors.add_log_level,
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
@@ -169,7 +169,7 @@ def setup_logging(
     else:
         console_processors = [
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.TimeStamper(fmt="iso", utc=False),
             structlog.processors.add_log_level,
             structlog.processors.format_exc_info,
             structlog.processors.LogfmtRenderer(),
@@ -185,7 +185,7 @@ def setup_logging(
         file_handler.setFormatter(structlog.stdlib.ProcessorFormatter(
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.processors.TimeStamper(fmt="iso", utc=False),
                 structlog.processors.add_log_level,
                 structlog.processors.format_exc_info,
                 structlog.processors.JSONRenderer(),
