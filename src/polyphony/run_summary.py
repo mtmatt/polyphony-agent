@@ -185,6 +185,21 @@ class RunSummary:
             with open(readme_path, "w") as f:
                 f.write(content)
 
+    def to_json(self) -> Dict[str, Any]:
+        duration = (self.end_time - self.start_time).total_seconds() if self.end_time else None
+        
+        return {
+            "goal": self.goal,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "duration": duration,
+            "total_cost": self.cost_tracker.total_cost,
+            "tasks": [t.model_dump() for t in self.tasks],
+            "results": [r.model_dump() for r in self.results],
+            "usage_by_model": {m: u.model_dump() for m, u in self.cost_tracker.usage_by_model.items()},
+            "status": "success" if sum(1 for r in self.results if r.success) == len(self.tasks) and len(self.tasks) > 0 else "failed"
+        }
+
     def save(self, directory: str = "."):
         self.finalize()
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -192,18 +207,24 @@ class RunSummary:
         # Sanitize slug: keep only alphanumeric and hyphens, replace others with hyphens
         slug = re.sub(r'[^a-z0-9\-]', '-', self.goal.lower())
         slug = re.sub(r'-+', '-', slug).strip('-')[:30]
-        filename = f"polyphony-run-{slug}-{timestamp}.md"
         
         # Create logs directory if it doesn't exist
         logs_dir = os.path.join(directory, "logs")
         os.makedirs(logs_dir, exist_ok=True)
         
-        path = os.path.join(logs_dir, filename)
-        
-        with open(path, "w") as f:
+        # Save Markdown summary
+        md_filename = f"polyphony-run-{slug}-{timestamp}.md"
+        md_path = os.path.join(logs_dir, md_filename)
+        with open(md_path, "w") as f:
             f.write(self.to_markdown())
+            
+        # Save JSON summary
+        json_filename = f"polyphony-run-{slug}-{timestamp}.json"
+        json_path = os.path.join(logs_dir, json_filename)
+        with open(json_path, "w") as f:
+            json.dump(self.to_json(), f, indent=2)
         
         # Update documentation after successful runs
         self.update_documentation(directory)
         
-        return path
+        return md_path

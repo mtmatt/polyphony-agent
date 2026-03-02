@@ -64,8 +64,3 @@ For complex tasks, you can provide an entire specification file as context:
 polyphony "Implement the features described in the spec" --spec requirements.md
 ```
 
-
-## Recent Activity
-
-_Last successful run: 2026-03-02 - Move completed task name to complete task section. Then keep improve your self_
-

@@ -7,17 +7,22 @@ from .utils import extract_json
 
 from .config import MCPServerConfig
 
+from .logging import get_logger
+
+logger = get_logger(__name__)
+
 class Plan(BaseModel):
     tasks: List[AgentTask]
 
 class GeminiAgent(BaseAgent):
-    def __init__(self, model_name: str = "gemini-3-flash-preview", flash_model_name: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
+    def __init__(self, model_name: str = "gemini-3-flash-preview", flash_model_name: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None, sandbox: bool = False):
         super().__init__()
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = flash_model_name
         self.context = ""
         self.mcp_servers = mcp_servers or []
+        self.sandbox = sandbox
 
     @property
     def model_name(self) -> str:
@@ -35,6 +40,12 @@ class GeminiAgent(BaseAgent):
     def flash_model_name(self) -> Optional[str]:
         return self._flash_model_name
 
+    def _get_base_command(self) -> List[str]:
+        cmd = ["gemini", "--model", self.model_name]
+        if self.sandbox:
+            cmd.append("--sandbox")
+        return cmd
+
     def receive_context(self, context: str):
         self.context = context
 
@@ -49,9 +60,9 @@ class GeminiAgent(BaseAgent):
         )
         
         try:
-            # Call gemini with non-interactive mode and YOLO mode
+            cmd = self._get_base_command() + ["-y", "-o", "json", "-p", prompt]
             result = subprocess.run(
-                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
+                cmd,
                 capture_output=True,
                 text=True,
                 check=True
@@ -66,10 +77,15 @@ class GeminiAgent(BaseAgent):
                     return "complex"
                 return "simple"
             else:
-                return "simple" # Default to simple on error
+                logger.error("classification_failed_no_json", output=output)
+                return "simple" 
 
-        except Exception:
-            return "simple" # Default to simple on error
+        except subprocess.CalledProcessError as e:
+            logger.error("classification_failed_subprocess", stderr=e.stderr, model=self.model_name)
+            raise RuntimeError(f"Failed to classify goal with Gemini: {e.stderr}")
+        except Exception as e:
+            logger.error("classification_failed_unknown", error=str(e))
+            return "simple"
 
     def decompose_goal(self, goal: str) -> List[AgentTask]:
         """
@@ -90,25 +106,20 @@ class GeminiAgent(BaseAgent):
         )
         
         try:
-            # Call gemini with non-interactive mode, json output format, and YOLO mode
+            cmd = self._get_base_command() + ["-y", "-o", "json", "-p", prompt]
             result = subprocess.run(
-                ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
+                cmd,
                 capture_output=True,
                 text=True,
                 check=True
             )
             
-            # Extract JSON from output. gemini outputs logs and then the JSON.
             output = result.stdout
             outer_json = extract_json(output)
             
             if outer_json:
                 self._extract_usage(outer_json)
-                # The actual response from the model is in outer_json['response']
                 model_response = outer_json.get('response', '')
-                
-                # The model response should contain the tasks JSON.
-                # Use extract_json again to be safe.
                 task_data = extract_json(model_response)
                 if task_data and "tasks" in task_data:
                     plan = Plan.model_validate(task_data)
@@ -119,10 +130,10 @@ class GeminiAgent(BaseAgent):
                 raise ValueError(f"Could not find JSON in gemini output: {output}")
 
         except subprocess.CalledProcessError as e:
-            print(f"Error calling gemini: {e.stderr}")
-            return []
+            logger.error("decomposition_failed_subprocess", stderr=e.stderr)
+            raise RuntimeError(f"Failed to decompose goal with Gemini: {e.stderr}")
         except Exception as e:
-            print(f"Error decomposing goal: {e}")
+            logger.error("decomposition_failed_unknown", error=str(e))
             return []
 
     def _extract_usage(self, outer_json: Dict[str, Any]) -> Optional[TokenUsage]:
@@ -158,7 +169,7 @@ class GeminiAgent(BaseAgent):
         """
         Calls gemini to perform a specific task, capturing history from stream-json.
         """
-        print(f"GeminiAgent executing task: {task.description}")
+        logger.info("gemini_agent_executing", task_id=task.id, sandbox=self.sandbox)
         
         # Formulate a prompt for gemini to perform the task
         prompt = (
@@ -175,8 +186,9 @@ class GeminiAgent(BaseAgent):
         
         try:
             # Call gemini with stream-json output format
+            cmd = self._get_base_command() + ["-y", "-o", "stream-json", "-p", prompt]
             process = subprocess.Popen(
-                ["gemini", "--model", self.model_name, "-y", "-o", "stream-json", "-p", prompt],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True

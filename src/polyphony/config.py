@@ -9,6 +9,7 @@ class AgentConfig(BaseModel):
     flash_model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    sandbox: bool = Field(default=False)
 
 class MCPServerConfig(BaseModel):
     command: str

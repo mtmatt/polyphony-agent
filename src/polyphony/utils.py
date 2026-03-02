@@ -176,11 +176,13 @@ def extract_relevant_dirs(text: str, path: str = ".") -> List[str]:
 
         # 3. Common keyword mappings
         kw_map = {
-            "test": ["tests", "test"],
-            "doc": ["docs", "doc", "documentation"],
-            "src": ["src", "lib", "app"],
-            "requirement": ["docs", "requirements.txt"],
-            "config": ["config", "settings"]
+            "test": ["tests", "test", "__tests__", "spec"],
+            "doc": ["docs", "doc", "documentation", "wiki"],
+            "src": ["src", "lib", "app", "cmd", "pkg", "internal"],
+            "requirement": ["docs", "requirements.txt", "package.json", "go.mod", "Cargo.toml", "pom.xml"],
+            "config": ["config", "settings", "options", "env"],
+            "web": ["web", "frontend", "ui", "public", "static", "assets"],
+            "api": ["api", "server", "backend", "routes", "controllers"]
         }
         
         for kw, targets in kw_map.items():
@@ -228,9 +230,11 @@ def extract_json(text: str) -> Optional[dict]:
     
     return None
 
+from .ast_parsing import get_file_symbols
+
 def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> str:
     """
-    Returns a string representation of the project structure, including key symbols for Python files.
+    Returns a string representation of the project structure, including key symbols for multiple languages.
     """
     repo_map = []
     try:
@@ -264,61 +268,12 @@ def get_repo_map(path: str = ".", include_only: Optional[List[str]] = None) -> s
                 file_path = os.path.join(root, f)
                 repo_map.append(f"{sub_indent}{f}")
                 
-                # If it's a Python file, extract symbols using AST
-                if f.endswith('.py'):
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as file_content:
-                            tree = ast.parse(file_content.read())
-                            
-                            symbol_indent = ' ' * 4 * (level + 2)
-                            
-                            for node in tree.body:
-                                if isinstance(node, ast.ClassDef):
-                                    bases = ""
-                                    if node.bases:
-                                        base_names = []
-                                        for base in node.bases:
-                                            if isinstance(base, ast.Name):
-                                                base_names.append(base.id)
-                                            elif isinstance(base, ast.Attribute):
-                                                base_names.append(f"{base.value.id}.{base.attr}")
-                                        if base_names:
-                                            bases = f"({', '.join(base_names)})"
-                                    
-                                    repo_map.append(f"{symbol_indent}Class {node.name}{bases}")
-                                    
-                                    # Docstring
-                                    doc = ast.get_docstring(node)
-                                    if doc:
-                                        first_line = doc.strip().split('\n')[0]
-                                        repo_map.append(f"{symbol_indent}    \"\"\"{first_line}\"\"\"")
-
-                                    # Methods
-                                    for subnode in node.body:
-                                        if isinstance(subnode, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                            # Skip private methods if they don't seem high-signal
-                                            if subnode.name.startswith('_') and not (subnode.name.startswith('__') and subnode.name.endswith('__')):
-                                                continue
-                                            
-                                            args = [arg.arg for arg in subnode.args.args]
-                                            sig = f"{subnode.name}({', '.join(args)})"
-                                            repo_map.append(f"{symbol_indent}    Method {sig}")
-                                            
-                                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                                    # Skip private functions
-                                    if node.name.startswith('_'):
-                                        continue
-                                        
-                                    args = [arg.arg for arg in node.args.args]
-                                    sig = f"{node.name}({', '.join(args)})"
-                                    repo_map.append(f"{symbol_indent}Function {sig}")
-                                    
-                                    doc = ast.get_docstring(node)
-                                    if doc:
-                                        first_line = doc.strip().split('\n')[0]
-                                        repo_map.append(f"{symbol_indent}    \"\"\"{first_line}\"\"\"")
-                    except Exception:
-                        pass # Skip if file cannot be read or parsed
+                # Extract symbols using the multi-language parser
+                symbols = get_file_symbols(file_path)
+                if symbols:
+                    symbol_indent = ' ' * 4 * (level + 2)
+                    for sym in symbols:
+                        repo_map.append(f"{symbol_indent}{sym}")
         
         return "\n".join(repo_map)
     except Exception as e:

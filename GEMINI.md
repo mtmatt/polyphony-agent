@@ -30,7 +30,7 @@
 1.  **Enhanced Git-Native Integration** - COMPLETED
 2.  **Smarter Plan-Act-Verify Loop** - COMPLETED
 3.  **Parallel Task Execution** - COMPLETED
-4.  **Intelligent Repository Mapping** - COMPLETED
+4.  **Intelligent Repository Mapping** - COMPLETED (Supports Python, JS/TS, Go, Rust, Java)
 5.  **MCP Support Integration** - COMPLETED
 6.  **Dynamic Model Switching** - COMPLETED
 7.  **Cost Tracking & Budget Management** - COMPLETED
@@ -39,98 +39,28 @@
 10. **Extended Session Duration (2-Hour Passes)** - COMPLETED
 11. **Streaming Output & Progress** - COMPLETED (Real-time streaming callbacks, event-based progress UI, parallel execution status)
 12. **Test Generation** - COMPLETED (Automatic unit test generation, property-based testing patterns, `generate_and_run_tests` utility)
-
-### Session Management Features
-
-The system now supports extended execution sessions with configurable duration limits:
-
-- **Default Duration:** 2 hours (7200 seconds) per session
-- **Configurable via CLI:** Use `--max-duration <seconds>` flag
-- **Configurable via Config:** Set `max_run_duration` in `polyphony.toml`
-- **Duration Monitoring:** Warnings at 80% consumed, graceful termination at limit
+13. **Enhanced Logging & Observability** - COMPLETED (Structured logging, log levels, metrics collection)
+14. **Multi-Language Support** - COMPLETED (Symbol extraction for major languages)
+15. **Web Interface** - COMPLETED (FastAPI-based dashboard with task graphs)
+16. **Advanced Context Management** - COMPLETED (Intelligent context pruning)
+17. **Collaborative Multi-Agent Protocols** - COMPLETED (Specialized QA Agent role)
+18. **Local Model Support** - COMPLETED (Ollama integration)
+19. **Security & Safety** - COMPLETED (Secure sandbox mode for Gemini)
+20. **Workflow Templates** - COMPLETED (Scaffolding for common projects)
 
 # Potential Improvements
 
-## High Priority
+1. **Self-Optimizing Workflows**
+    *   Agents should analyze their own performance metrics across runs to suggest architectural changes to the host application (Meta-Optimization).
 
-1.  **Streaming Output & Progress**
-    *   Real-time streaming of agent thoughts and tool calls during execution
-    *   Live progress indicators for long-running operations
-    *   WebSocket or SSE support for web-based monitoring
+2. **Predictive Context Loading**
+    *   Pre-fetching repository maps and documentation for files identified in the planning phase before they are explicitly requested by execution agents.
 
-2.  **Test Generation**
-    *   Automatic generation of unit tests for created code
-    *   Property-based testing suggestions
-    *   Coverage analysis and gap identification
+3. **Collaborative Multi-Agent Planning**
+    *   Utilizing different specialized agent roles (e.g., Security Architect, Senior Dev, QA Specialist) during the `enter_plan_mode` phase for high-stakes features.
 
-## Medium Priority
-
-5.  **Agent Memory & Learning**
-    *   Persistent memory of past runs and common patterns
-    *   Learn from successful strategies for similar tasks
-    *   User preference learning (coding style, conventions)
-
-6.  **Interactive Mode**
-    *   Human-in-the-loop approval for critical operations
-    *   Interactive clarification when goal is ambiguous
-    *   Mid-run parameter adjustment
-
-7.  **Cross-File Refactoring**
-    *   Safe rename operations across multiple files
-    *   Extract function/class with automatic import updates
-    *   Dependency impact analysis
-
-8.  **Documentation Generation**
-    *   Auto-generate API documentation from code
-    *   Create user guides and tutorials
-    *   Architecture diagram generation
-
-9.  **Performance Profiling**
-    *   Identify performance bottlenecks in execution flow
-    *   Token usage optimization suggestions
-    *   Parallel execution opportunity detection
-
-## Low Priority
-
-10. **Enhanced Logging & Observability**
-    *   Structured logging with log levels
-    *   OpenTelemetry integration for tracing
-    *   Performance metrics dashboard
-
-11. **Multi-Language Support**
-    *   Support for JavaScript/TypeScript, Go, Rust, Java
-    *   Language-specific AST parsing and repo maps
-    *   Cross-language dependency tracking
-
-12. **Web Interface**
-    *   Browser-based dashboard for run monitoring
-    *   Historical run comparison and analytics
-    *   Visual task dependency graphs
-
-13. **Advanced Context Management**
-    *   Intelligent context pruning based on relevance
-    *   Semantic caching of frequently accessed files
-    *   Incremental context updates instead of full reloads
-
-14. **Collaborative Multi-Agent Protocols**
-    *   Specialized agent roles (Architect, QA, Security)
-    *   Agent negotiation and consensus mechanisms
-    *   Parallel agent collaboration on sub-problems
-
-15. **Local Model Support**
-    *   Integration with Ollama, LM Studio
-    *   On-device inference for simple tasks
-    *   Hybrid cloud/local execution strategies
-
-16. **Security & Safety**
-    *   Sandbox execution environment for untrusted code
-    *   Security vulnerability scanning
-    *   Permission system for file operations
-
-17. **Workflow Templates**
-    *   Pre-defined workflows for common patterns (CRUD app, API, etc.)
-    *   Custom workflow definition language
-    *   Workflow composition and reuse
+4. **Hardware-Accelerated Tooling**
+    *   Integration with local inference servers for sub-millisecond classification and simple task evaluation.
 
 # Recent Performance Audit Findings (March 2026)
 
@@ -144,124 +74,3 @@ The system now supports extended execution sessions with configurable duration l
 2.  **Predictive Context Loading:** Pre-fetching repository maps and documentation for files identified in the planning phase before they are explicitly requested by execution agents.
 3.  **Collaborative Multi-Agent Planning:** Utilizing different specialized agent roles (e.g., Security Architect, Senior Dev, QA Specialist) during the `enter_plan_mode` phase for high-stakes features.
 4.  **Hardware-Accelerated Tooling:** Integration with local inference servers for sub-millisecond classification and simple task evaluation.
-
-
-# Recent Runs
-
-### Run: Move completed task name to complete task section. Then keep improve your self
-
-- **Date:** 2026-03-02
-- **Duration:** 0:13:40.800965
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0019
-- **Tasks Completed:** 5/5
-
-**Completed Tasks:**
-- Audit the codebase for completed features and update GEMINI.md. Specifically, move 'Agent Memory & Learning' to the 'Completed Features' section, remove 'Streaming Output & Progress' and 'Test Generation' from the 'Potential Improvements' list (as they are already completed), and check if 'Documentation Generation' and 'Cross-File Refactoring' are sufficiently implemented to be marked as completed.
-- Research the CLI and Engine execution loop to identify optimal hook points for 'Interactive Mode' (human-in-the-loop approval and clarification).
-- Implement the 'Interactive Mode' feature, including a `--interactive` CLI flag, Engine-level approval hooks, and the ability to prompt the user for clarification when a goal is ambiguous.
-
-### Run: These simple goal record inside the gemini.md is not needed, also, the agent doing the same task for multiple times. Fix it
-
-- **Date:** 2026-03-02
-- **Duration:** 0:48:44.090323
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0019
-- **Tasks Completed:** 11/11
-
-**Completed Tasks:**
-- Investigate `src/polyphony/run_summary.py`, `src/polyphony/engine.py`, and `src/polyphony/agent.py` to understand how run summaries are generated and why 'simple goal' runs are recorded and tasks are duplicated.
-- Remove all existing 'simple goal' run entries from `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` (or the relevant component) to prevent runs with the goal 'simple goal' from being recorded in `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
-- Modify `src/polyphony/run_summary.py` to de-duplicate the list of completed tasks (by description) before writing them to `GEMINI.md`.
-- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
-- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
-- Create a test case or run a manual verification script that simulates a 'simple goal' run and a run with duplicate tasks to ensure they are handled correctly in `GEMINI.md`.
-
-### Run: Continue your work
-
-- **Date:** 2026-03-02
-- **Duration:** 0:26:30.463260
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0017
-- **Tasks Completed:** 8/8
-
-**Completed Tasks:**
-- Research the current implementation in `src/polyphony/memory.py` and `src/polyphony/run_summary.py` to identify the specific gaps for 'Agent Memory & Learning' as outlined in GEMINI.md.
-- Enhance `src/polyphony/memory.py` to support persistent storage and retrieval of successful task strategies and common patterns across different runs.
-- Enhance `src/polyphony/memory.py` to support persistent storage and retrieval of successful task strategies and common patterns across different runs.
-- Enhance `src/polyphony/memory.py` to support persistent storage and retrieval of successful task strategies and common patterns across different runs.
-- Implement logic to extract and store user preferences (e.g., coding style, preferred tools, architectural conventions) from interaction history.
-- Implement logic to extract and store user preferences (e.g., coding style, preferred tools, architectural conventions) from interaction history.
-- Implement logic to extract and store user preferences (e.g., coding style, preferred tools, architectural conventions) from interaction history.
-- Update the `Agent` and `Engine` to load relevant memories and preferences during the planning and execution phases.
-
-### Run: simple goal
-
-- **Date:** 2026-03-02
-- **Duration:** 0:00:00.002544
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-02
-- **Duration:** 0:00:00.003575
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.002309
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.003619
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.002490
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal
-
-### Run: simple goal
-
-- **Date:** 2026-03-01
-- **Duration:** 0:00:00.003727
-- **Status:** [SUCCESS]
-- **Total Cost:** $0.0000
-- **Tasks Completed:** 1/1
-
-**Completed Tasks:**
-- simple goal

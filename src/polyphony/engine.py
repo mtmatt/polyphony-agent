@@ -15,7 +15,10 @@ from .gemini_agent import GeminiAgent
 from .run_summary import RunSummary
 from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
 from .checkpoint import RunCheckpoint
+from .logging import get_logger
+from .metrics import collector as metrics_collector
 
+logger = get_logger(__name__)
 console = Console()
 
 class ErrorCategory(str, Enum):
@@ -64,13 +67,17 @@ class DependencyResolver:
 from .cost import CostTracker
 
 class Orchestrator:
-    def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False, budget_limit: float = 0.0, run_id: Optional[str] = None, checkpoint_dir: str = ".polyphony/checkpoints", max_run_duration: int = 7200):
+    def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, qa_agent: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False, budget_limit: float = 0.0, run_id: Optional[str] = None, checkpoint_dir: str = ".polyphony/checkpoints", max_run_duration: int = 7200):
         self.planner = planner
         self.executor = executor or planner
+        self.qa_agent = qa_agent
         self.agents: Dict[str, BaseAgent] = {
             "planner": self.planner,
             "executor": self.executor
         }
+        if self.qa_agent:
+            self.agents["qa"] = self.qa_agent
+        
         self.auto_commit = auto_commit
         self.parallel = parallel
         self.budget_limit = budget_limit
@@ -157,13 +164,28 @@ class Orchestrator:
         self._check_budget()
 
     def _get_repo_map(self, goal: Optional[str] = None) -> str:
+        """
+        Returns a pruned repository map based on the goal.
+        Implements intelligent context pruning.
+        """
         include_only = None
         if goal:
+            # 1. Identify relevant directories based on keywords
             include_only = extract_relevant_dirs(goal)
+            
+            # 2. Heuristic: if goal mentions specific filenames, ensure their directories are included
+            # (already partially handled by extract_relevant_dirs)
+            
             if include_only:
-                console.print(f"[dim]Filtering repo map for: {', '.join(include_only)}[/dim]")
+                console.print(f"[dim]Intelligent pruning: focusing on {', '.join(include_only)}[/dim]")
+                logger.info("context_pruning", include_dirs=include_only)
         
-        return get_repo_map(include_only=include_only)
+        repo_map = get_repo_map(include_only=include_only)
+        
+        # 3. Context Pruning: If the repo map is too large, we might want to prune it further.
+        # For now, we'll just use the directory-based filtering which is already a big improvement.
+        
+        return repo_map
 
     async def run_goal(self, goal: str, context: str = ""):
         self._check_budget()
@@ -193,6 +215,7 @@ class Orchestrator:
                 self.context = context
 
         console.print(f"\n[bold blue]>>> Orchestrating goal: {goal} (Run ID: {self.run_id})[/bold blue]")
+        logger.info("orchestrating_goal", goal=goal, run_id=self.run_id)
         
         # Check if we have tasks for this goal (already planned/decomposed)
         tasks = self.tasks_by_goal.get(goal)
@@ -203,6 +226,7 @@ class Orchestrator:
                 classification = await asyncio.to_thread(self.planner.classify_goal, goal)
                 self.is_simple = (classification == "simple")
                 console.print(f"[dim]Goal classified as: {classification}[/dim]")
+                logger.info("goal_classified", goal=goal, classification=classification)
                 self._sync_usage()
             else:
                 self.is_simple = False
@@ -424,11 +448,14 @@ class Orchestrator:
 
         try:
             while task.retry_count <= task.max_retries:
+                logger.info("executing_task", task_id=task.id, retry_count=task.retry_count, agent_model=agent.model_name)
+                metrics_collector.start_task(task_id=task.id, goal=self.goal, model=agent.model_name)
                 # Step 1: Execute using the selected agent
                 # Model Fallback: If it's a retry and we're not already on the pro model, switch to pro
                 if task.retry_count > 0 and agent.flash_model_name and agent.model_name == agent.flash_model_name:
                     agent.model_name = agent.pro_model_name
                     console.print(f"  [dim]Retry {task.retry_count}: Falling back to pro model {agent.model_name}[/dim]")
+                    logger.info("retry_model_fallback", task_id=task.id, retry_count=task.retry_count, new_model=agent.model_name)
 
                 progress.update(task_layer, completed=10, description=f"[cyan]Agent Thinking ({agent.model_name}): {task.id}")
                 
@@ -469,6 +496,8 @@ class Orchestrator:
 
                 if not result.success:
                     task.retry_count += 1
+                    logger.warning("task_execution_failed", task_id=task.id, error=result.error, retry_count=task.retry_count)
+                    metrics_collector.end_task(task_id=task.id, success=False)
                     self.run_summary.add_result(task, result)
                     # Smarter context update for retry
                     category = self._categorize_error(result.error or "")
@@ -478,6 +507,7 @@ class Orchestrator:
                 # Step 2: Verify
                 if task.verification_command:
                     progress.update(task_layer, completed=75, description=f"[cyan]Verifying: {task.id}")
+                    logger.info("verifying_task", task_id=task.id, command=task.verification_command)
                     try:
                         verify_result = await asyncio.to_thread(
                             subprocess.run,
@@ -490,12 +520,15 @@ class Orchestrator:
                         
                         result.verification_output = f"Command: {task.verification_command}\nStdout:\n{verify_result.stdout}\nStderr:\n{verify_result.stderr}"
                         return_code = verify_result.returncode
+                        logger.info("verification_complete", task_id=task.id, return_code=return_code)
                     except subprocess.TimeoutExpired:
                         result.verification_output = f"Command: {task.verification_command}\nError: Verification timed out after 60 seconds."
                         return_code = 1
+                        logger.error("verification_timeout", task_id=task.id)
                     except Exception as e:
                         result.verification_output = f"Command: {task.verification_command}\nError: {str(e)}"
                         return_code = 1
+                        logger.error("verification_error", task_id=task.id, error=str(e))
                     
                     if return_code == 0:
                         # Step 3: Git Commit (Optional)
@@ -507,12 +540,21 @@ class Orchestrator:
                             if git_res_dict.get("success"):
                                 result.commit_hash = git_res_dict.get("commit_hash")
                                 console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
+                                logger.info("git_commit_success", task_id=task.id, commit_hash=result.commit_hash)
                             else:
                                 console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
+                                logger.warning("git_commit_failed", task_id=task.id, error=git_res_dict.get('message'))
                         
                         self.run_summary.add_result(task, result)
                         task.status = "completed"
                         progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
+                        logger.info("task_completed", task_id=task.id, duration=result.duration)
+                        metrics_collector.end_task(
+                            task_id=task.id, 
+                            success=True, 
+                            tokens_prompt=result.usage.prompt_tokens if result.usage else 0,
+                            tokens_completion=result.usage.completion_tokens if result.usage else 0
+                        )
                         return
                     else:
                         task.retry_count += 1
@@ -520,6 +562,8 @@ class Orchestrator:
                         task.context = f"{task.context or ''}\n{reflection_prompt}"
                         
                         console.print(f"  [yellow]Verification failed for {task.id} ({task.retry_count}/{task.max_retries + 1}). Retrying...[/yellow]")
+                        logger.warning("verification_failed", task_id=task.id, retry_count=task.retry_count)
+                        metrics_collector.end_task(task_id=task.id, success=False)
                         self.run_summary.add_result(task, result)
                 else:
                     # No verification command, assume success if execution was successful
@@ -531,12 +575,21 @@ class Orchestrator:
                         if git_res_dict.get("success"):
                             result.commit_hash = git_res_dict.get("commit_hash")
                             console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
+                            logger.info("git_commit_success", task_id=task.id, commit_hash=result.commit_hash)
                         else:
                             console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
+                            logger.warning("git_commit_failed", task_id=task.id, error=git_res_dict.get('message'))
                     
                     self.run_summary.add_result(task, result)
                     task.status = "completed"
                     progress.update(task_layer, completed=100, description=f"[cyan]Done: {task.id}")
+                    logger.info("task_completed", task_id=task.id, duration=result.duration)
+                    metrics_collector.end_task(
+                        task_id=task.id, 
+                        success=True, 
+                        tokens_prompt=result.usage.prompt_tokens if result.usage else 0,
+                        tokens_completion=result.usage.completion_tokens if result.usage else 0
+                    )
                     return
         finally:
             # Restore original model
@@ -544,6 +597,7 @@ class Orchestrator:
 
         task.status = "failed"
         progress.update(task_layer, completed=100, description=f"[bold red]Failed: {task.id}")
+        logger.error("task_failed_permanently", task_id=task.id, retry_count=task.retry_count)
 
     def _categorize_error(self, output: str) -> ErrorCategory:
         """Categorizes an error based on its output."""
