@@ -67,5 +67,5 @@ polyphony "Implement the features described in the spec" --spec requirements.md
 
 ## Recent Activity
 
-_Last successful run: 2026-03-02 - These simple goal record inside the gemini.md is not needed, also, the agent doing the same task for multiple times. Fix it_
+_Last successful run: 2026-03-02 - Move completed task name to complete task section. Then keep improve your self_
 
