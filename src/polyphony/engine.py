@@ -127,6 +127,8 @@ class Orchestrator:
             return -1
         elapsed = (datetime.now() - self.start_time).total_seconds()
         return max(0, int(self.max_run_duration - elapsed))
+
+    def _check_budget(self):
         """Checks if the budget limit has been reached and raises an error if it has."""
         # Check duration first
         self._check_duration()

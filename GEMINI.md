@@ -37,6 +37,8 @@
 8.  **Checkpointing & Resume** - COMPLETED (Atomic saves, recursive task support)
 9.  **Enhanced Error Recovery** - COMPLETED (Categorized handlers, model fallback, robust parallel execution)
 10. **Extended Session Duration (2-Hour Passes)** - COMPLETED
+11. **Streaming Output & Progress** - COMPLETED (Real-time streaming callbacks, event-based progress UI, parallel execution status)
+12. **Test Generation** - COMPLETED (Automatic unit test generation, property-based testing patterns, `generate_and_run_tests` utility)
 
 ### Session Management Features
 
@@ -142,3 +144,50 @@ The system now supports extended execution sessions with configurable duration l
 2.  **Predictive Context Loading:** Pre-fetching repository maps and documentation for files identified in the planning phase before they are explicitly requested by execution agents.
 3.  **Collaborative Multi-Agent Planning:** Utilizing different specialized agent roles (e.g., Security Architect, Senior Dev, QA Specialist) during the `enter_plan_mode` phase for high-stakes features.
 4.  **Hardware-Accelerated Tooling:** Integration with local inference servers for sub-millisecond classification and simple task evaluation.
+
+
+# Recent Runs
+
+### Run: simple goal
+
+- **Date:** 2026-03-01
+- **Duration:** 0:00:00.002309
+- **Status:** [SUCCESS]
+- **Total Cost:** $0.0000
+- **Tasks Completed:** 1/1
+
+**Completed Tasks:**
+- simple goal
+
+### Run: simple goal
+
+- **Date:** 2026-03-01
+- **Duration:** 0:00:00.003619
+- **Status:** [SUCCESS]
+- **Total Cost:** $0.0000
+- **Tasks Completed:** 1/1
+
+**Completed Tasks:**
+- simple goal
+
+### Run: simple goal
+
+- **Date:** 2026-03-01
+- **Duration:** 0:00:00.002490
+- **Status:** [SUCCESS]
+- **Total Cost:** $0.0000
+- **Tasks Completed:** 1/1
+
+**Completed Tasks:**
+- simple goal
+
+### Run: simple goal
+
+- **Date:** 2026-03-01
+- **Duration:** 0:00:00.003727
+- **Status:** [SUCCESS]
+- **Total Cost:** $0.0000
+- **Tasks Completed:** 1/1
+
+**Completed Tasks:**
+- simple goal
