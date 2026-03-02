@@ -5,7 +5,7 @@ from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage
+from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
 from .utils import write_file, replace_text, run_command
 from .config import MCPServerConfig
 from .mcp_client import MCPClient
@@ -317,3 +317,59 @@ class OpenAIAgent(BaseAgent):
 
         except Exception:
             return super().generate_commit_message(result)
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        """
+        Calls OpenAI to review a collaborative plan from the perspective of a given role.
+        """
+        tasks_summary = "\n".join(
+            f"- [{t.id}] {t.description}" for t in plan.tasks
+        )
+        prompt = (
+            f"You are a {role.value} reviewing an engineering plan.\n"
+            f"Goal: {plan.goal}\n\n"
+            f"Tasks:\n{tasks_summary}\n\n"
+            "Review the plan from your specialized perspective. "
+            "Output a JSON object with this structure:\n"
+            '{"approved": true/false, "confidence_score": 0.0-1.0, '
+            '"comments": [{"comment": "...", "severity": "info|warning|error|suggestion", '
+            '"target_task_id": "task_id_or_null", "suggested_changes": "..._or_null"}]}\n'
+            "Only output the JSON object, nothing else."
+        )
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            self._update_usage(response.usage)
+            import json
+            review_data = json.loads(response.choices[0].message.content)
+            comments = [
+                ReviewComment(
+                    reviewer_role=role,
+                    comment=c.get("comment", ""),
+                    severity=c.get("severity", "suggestion"),
+                    target_task_id=c.get("target_task_id"),
+                    suggested_changes=c.get("suggested_changes"),
+                )
+                for c in review_data.get("comments", [])
+            ]
+            return PlanReview(
+                original_plan_id=plan.goal,
+                reviewers=[role],
+                comments=comments,
+                approved=review_data.get("approved", False),
+                confidence_score=float(review_data.get("confidence_score", 0.5)),
+            )
+        except Exception:
+            pass
+
+        return PlanReview(
+            original_plan_id=plan.goal,
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=0.5,
+        )

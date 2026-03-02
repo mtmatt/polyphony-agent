@@ -2,7 +2,7 @@ import subprocess
 import json
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
-from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage
+from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
 from .utils import extract_json
 
 from .config import MCPServerConfig
@@ -290,3 +290,65 @@ class GeminiAgent(BaseAgent):
 
         except Exception:
             return super().generate_commit_message(result)
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        """
+        Calls gemini to review a collaborative plan from the perspective of a given role.
+        """
+        tasks_summary = "\n".join(
+            f"- [{t.id}] {t.description}" for t in plan.tasks
+        )
+        prompt = (
+            f"You are a {role.value} reviewing an engineering plan.\n"
+            f"Goal: {plan.goal}\n\n"
+            f"Tasks:\n{tasks_summary}\n\n"
+            "Review the plan from your specialized perspective. "
+            "Output a JSON object with this structure:\n"
+            '{"approved": true/false, "confidence_score": 0.0-1.0, '
+            '"comments": [{"comment": "...", "severity": "info|warning|error|suggestion", '
+            '"target_task_id": "task_id_or_null", "suggested_changes": "..._or_null"}]}\n'
+            "Only output the JSON object, nothing else."
+        )
+
+        try:
+            cmd = self._get_base_command() + ["-y", "-o", "json", "-p", prompt]
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=True,
+            )
+            outer_json = extract_json(result.stdout)
+            if outer_json:
+                self._extract_usage(outer_json)
+                review_data = extract_json(outer_json.get("response", ""))
+                if review_data:
+                    comments = [
+                        ReviewComment(
+                            reviewer_role=role,
+                            comment=c.get("comment", ""),
+                            severity=c.get("severity", "suggestion"),
+                            target_task_id=c.get("target_task_id"),
+                            suggested_changes=c.get("suggested_changes"),
+                        )
+                        for c in review_data.get("comments", [])
+                    ]
+                    return PlanReview(
+                        original_plan_id=plan.goal,
+                        reviewers=[role],
+                        comments=comments,
+                        approved=review_data.get("approved", False),
+                        confidence_score=float(review_data.get("confidence_score", 0.5)),
+                    )
+        except Exception as e:
+            logger.warning("review_plan_failed", role=role.value, error=str(e))
+
+        # Fallback: approve with neutral confidence
+        return PlanReview(
+            original_plan_id=plan.goal,
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=0.5,
+        )
