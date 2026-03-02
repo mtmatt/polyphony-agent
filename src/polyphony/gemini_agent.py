@@ -63,7 +63,8 @@ class GeminiAgent(BaseAgent):
             cmd = self._get_base_command() + ["-y", "-o", "json", "-p", prompt]
             result = subprocess.run(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 check=True
             )
@@ -82,10 +83,11 @@ class GeminiAgent(BaseAgent):
 
         except subprocess.CalledProcessError as e:
             logger.error("classification_failed_subprocess", stderr=e.stderr, model=self.model_name)
-            raise RuntimeError(f"Failed to classify goal with Gemini: {e.stderr}")
+            # Default to complex if classification fails to be safe
+            return "complex"
         except Exception as e:
             logger.error("classification_failed_unknown", error=str(e))
-            return "simple"
+            return "complex"
 
     def decompose_goal(self, goal: str) -> List[AgentTask]:
         """
@@ -109,7 +111,8 @@ class GeminiAgent(BaseAgent):
             cmd = self._get_base_command() + ["-y", "-o", "json", "-p", prompt]
             result = subprocess.run(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 check=True
             )
@@ -190,7 +193,7 @@ class GeminiAgent(BaseAgent):
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True
             )
             
@@ -250,8 +253,7 @@ class GeminiAgent(BaseAgent):
                     history=history
                 )
             else:
-                stderr = process.stderr.read()
-                return AgentResult(task_id=task.id, success=False, error=stderr, history=history)
+                return AgentResult(task_id=task.id, success=False, error=f"Gemini process exited with {process.returncode}", history=history)
 
         except Exception as e:
             return AgentResult(task_id=task.id, success=False, error=str(e), history=history)
@@ -271,7 +273,8 @@ class GeminiAgent(BaseAgent):
             # Call gemini with non-interactive mode, json output format, and YOLO mode
             sub_result = subprocess.run(
                 ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
                 check=True
             )

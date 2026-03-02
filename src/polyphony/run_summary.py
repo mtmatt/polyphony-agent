@@ -128,62 +128,8 @@ class RunSummary:
         return summary
 
     def update_documentation(self, base_dir: str = "."):
-        """Update GEMINI.md and README.md with run summary."""
-        import re
-        
-        total_tasks = len(self.tasks)
-        successful_tasks = sum(1 for r in self.results if r.success)
-        
-        # Only update docs for fully successful runs with meaningful tasks
-        if successful_tasks != total_tasks or total_tasks == 0:
-            return
-        
-        summary = self.generate_summary()
-        
-        # Update GEMINI.md
-        gemini_path = os.path.join(base_dir, "GEMINI.md")
-        if os.path.exists(gemini_path):
-            with open(gemini_path, "r") as f:
-                content = f.read()
-            
-            # Look for a "Recent Runs" or similar section, or create one
-            if "# Recent Runs" in content:
-                # Append to existing section
-                content = re.sub(
-                    r"(# Recent Runs.*?\n\n)",
-                    r"\1" + summary + "\n",
-                    content,
-                    flags=re.DOTALL
-                )
-            else:
-                # Add section at the end
-                content += f"\n\n# Recent Runs\n\n{summary}"
-            
-            with open(gemini_path, "w") as f:
-                f.write(content)
-        
-        # Update README.md - just note the latest execution
-        readme_path = os.path.join(base_dir, "README.md")
-        if os.path.exists(readme_path):
-            with open(readme_path, "r") as f:
-                content = f.read()
-            
-            # Look for a "Recent Activity" section
-            recent_note = f"_Last successful run: {self.start_time.strftime('%Y-%m-%d')} - {self.goal}_\n"
-            
-            if "## Recent Activity" in content:
-                content = re.sub(
-                    r"## Recent Activity\n\n.*?(?=\n##|$)",
-                    f"## Recent Activity\n\n{recent_note}",
-                    content,
-                    flags=re.DOTALL
-                )
-            else:
-                # Add at the end
-                content += f"\n\n## Recent Activity\n\n{recent_note}"
-            
-            with open(readme_path, "w") as f:
-                f.write(content)
+        """Documentation update is currently disabled to avoid cluttering README.md and GEMINI.md."""
+        pass
 
     def to_json(self) -> Dict[str, Any]:
         duration = (self.end_time - self.start_time).total_seconds() if self.end_time else None

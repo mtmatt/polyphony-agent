@@ -225,7 +225,6 @@ class Orchestrator:
             if hasattr(self.planner, 'classify_goal'):
                 classification = await asyncio.to_thread(self.planner.classify_goal, goal)
                 self.is_simple = (classification == "simple")
-                console.print(f"[dim]Goal classified as: {classification}[/dim]")
                 logger.info("goal_classified", goal=goal, classification=classification)
                 self._sync_usage()
             else:
@@ -237,19 +236,14 @@ class Orchestrator:
             for name, agent in self.agents.items():
                 if self.is_simple and agent.flash_model_name:
                     agent.model_name = agent.flash_model_name
-                    console.print(f"[dim]Switching {name} to flash model: {agent.model_name}[/dim]")
                 else:
                     agent.model_name = agent.pro_model_name
-                    # Only print if it's different from the flash model to avoid noise
-                    if agent.flash_model_name:
-                         console.print(f"[dim]Using {name} pro model: {agent.model_name}[/dim]")
             
             # 2. Build context lazily
             full_context = context
             if should_include_repo_map(goal):
                 repo_map = self._get_repo_map(goal)
                 full_context = f"{full_context}\nProject Structure:\n{repo_map}"
-                console.print(f"[dim]Included repo map in context.[/dim]")
             
             for agent in self.agents.values():
                 agent.receive_context(full_context)
@@ -258,14 +252,12 @@ class Orchestrator:
             if tasks is None:
                 if self.is_simple:
                     tasks = [AgentTask(id="direct_task", description=goal, agent_type="executor")]
-                    console.print(f"[dim]Executing simple goal directly.[/dim]")
                 else:
                     if hasattr(self.planner, 'decompose_goal'):
                         tasks = await asyncio.to_thread(self.planner.decompose_goal, goal)
                         self._sync_usage()
                     else:
                         tasks = [AgentTask(id="fallback_task", description=goal, agent_type="executor")]
-                    console.print(f"[dim]Decomposed into {len(tasks)} tasks.[/dim]")
                 
                 self.tasks_by_goal[goal] = tasks
                 
@@ -275,11 +267,7 @@ class Orchestrator:
             # 4. Filter out completed tasks
             remaining_tasks = [t for t in tasks if t.status != "completed"]
             
-            if len(remaining_tasks) < len(tasks):
-                console.print(f"[dim]Skipping {len(tasks) - len(remaining_tasks)} completed tasks for this goal.[/dim]")
-            
             if not remaining_tasks:
-                console.print(f"[bold green]All tasks for this goal already completed.[/bold green]")
                 return
 
             # 4. Multi-layered progress
@@ -297,7 +285,6 @@ class Orchestrator:
                 progress.advance(global_task, len(tasks) - len(remaining_tasks))
                 
                 if self.parallel and len(remaining_tasks) > 1:
-                    console.print(f"[dim]Executing tasks in parallel (Max 4 workers).[/dim]")
                     await self._execute_parallel(remaining_tasks, progress, global_task)
                 else:
                     task_layer = progress.add_task("[cyan]Current Task Progress", total=100)
@@ -333,7 +320,6 @@ class Orchestrator:
             if successful == total and total > 0:
                 console.print(f"[green][OK] All {total} task(s) completed successfully[/green]")
                 console.print(f"[dim]Total Cost: ${self.run_summary.cost_tracker.total_cost:.4f}[/dim]")
-                console.print(f"[dim]Documentation updated in GEMINI.md and README.md[/dim]")
             else:
                 console.print(f"[yellow][WARNING] {successful}/{total} task(s) completed[/yellow]")
                 console.print(f"[dim]Total Cost so far: ${self.run_summary.cost_tracker.total_cost:.4f}[/dim]")
