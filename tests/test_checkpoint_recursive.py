@@ -6,7 +6,7 @@ from polyphony.engine import Orchestrator
 from polyphony.agent import BaseAgent, AgentTask, AgentResult
 from polyphony.checkpoint import RunCheckpoint
 
-from polyphony.agent import BaseAgent, AgentTask, AgentResult, AgentAction
+from polyphony.agent import BaseAgent, AgentTask, AgentResult, AgentAction, CollaborativePlan, PlanReview, AgentRole
 
 class MockAgent(BaseAgent):
     def __init__(self, name="mock"):
@@ -35,6 +35,16 @@ class MockAgent(BaseAgent):
             return [AgentTask(id="task1", description="t1"), AgentTask(id="task2", description="t2")]
         return []
     def classify_goal(self, goal): return "complex"
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        return PlanReview(
+            original_plan_id="test",
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=1.0,
+            consensus_reached=True
+        )
 
 def test_checkpoint_recursive_saving(tmp_path):
     checkpoint_dir = str(tmp_path / "checkpoints")

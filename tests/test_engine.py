@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, patch
 from polyphony.engine import Orchestrator
-from polyphony.agent import AgentTask, AgentResult, BaseAgent
+from polyphony.agent import AgentTask, AgentResult, BaseAgent, CollaborativePlan, PlanReview, AgentRole
 from rich.progress import Progress
 
 class MockAgent(BaseAgent):
@@ -42,6 +42,16 @@ class MockAgent(BaseAgent):
 
     def classify_goal(self, goal: str):
         return "simple"
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        return PlanReview(
+            original_plan_id="test",
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=1.0,
+            consensus_reached=True
+        )
 
 def test_orchestrator_simple_goal():
     mock_agent = MockAgent()

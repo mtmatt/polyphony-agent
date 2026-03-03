@@ -3,7 +3,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 from polyphony.engine import Orchestrator
-from polyphony.agent import BaseAgent, AgentTask, AgentResult
+from polyphony.agent import BaseAgent, AgentTask, AgentResult, CollaborativePlan, PlanReview, AgentRole
 from polyphony.checkpoint import RunCheckpoint
 from polyphony.cost import CostTracker
 
@@ -25,6 +25,15 @@ class MockAgent(BaseAgent):
     def decompose_goal(self, goal):
         return [AgentTask(id="task1", description="t1"), AgentTask(id="task2", description="t2")]
     def classify_goal(self, goal): return "complex"
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        return PlanReview(
+            original_plan_id="test",
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=1.0,
+            consensus_reached=True
+        )
 
 def test_orchestrator_resume(tmp_path):
     checkpoint_dir = str(tmp_path / "checkpoints")

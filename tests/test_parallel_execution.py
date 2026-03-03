@@ -3,11 +3,12 @@ import asyncio
 import time
 from unittest.mock import MagicMock, patch
 from polyphony.engine import Orchestrator
-from polyphony.agent import AgentTask, AgentResult, BaseAgent
+from polyphony.agent import AgentTask, AgentResult, BaseAgent, CollaborativePlan, PlanReview, AgentRole
 from rich.progress import Progress
 
 class DelayedMockAgent(BaseAgent):
     def __init__(self, delay=0.1):
+        super().__init__()
         self._model_name = "delayed-mock"
         self._pro_model_name = "delayed-mock-pro"
         self._flash_model_name = "delayed-mock-flash"
@@ -44,6 +45,16 @@ class DelayedMockAgent(BaseAgent):
 
     def classify_goal(self, goal: str):
         return "complex"
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        return PlanReview(
+            original_plan_id="test",
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=1.0,
+            consensus_reached=True
+        )
 
 def test_parallel_execution_latency_reduction():
     """

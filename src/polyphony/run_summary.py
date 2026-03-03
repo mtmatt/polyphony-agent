@@ -18,6 +18,21 @@ class RunSummary:
         self.results.append(result)
         self.tasks.append(task)
 
+    def get_task_stats(self) -> Dict[str, int]:
+        """Calculates task-based statistics (unique tasks)."""
+        unique_task_ids = set()
+        completed_task_ids = set()
+        
+        for task, result in zip(self.tasks, self.results):
+            unique_task_ids.add(task.id)
+            if result.success:
+                completed_task_ids.add(task.id)
+        
+        return {
+            "total": len(unique_task_ids),
+            "successful": len(completed_task_ids)
+        }
+
     def finalize(self):
         self.end_time = datetime.now()
 
@@ -30,10 +45,12 @@ class RunSummary:
         md += f"**Duration:** {duration}\n\n"
 
         md += "## Execution Overview\n\n"
-        total_tasks = len(self.tasks)
-        successful_tasks = sum(1 for r in self.results if r.success)
-        md += f"- **Total Tasks:** {total_tasks}\n"
+        stats = self.get_task_stats()
+        total_tasks = stats["total"]
+        successful_tasks = stats["successful"]
+        md += f"- **Total Unique Tasks:** {total_tasks}\n"
         md += f"- **Successful Tasks:** {successful_tasks}\n"
+        md += f"- **Total Attempts:** {len(self.results)}\n"
         md += f"- **Status:** {'[SUCCESS]' if successful_tasks == total_tasks and total_tasks > 0 else '[FAILED]'}\n"
         md += f"- **Total Cost:** ${self.cost_tracker.total_cost:.4f}\n\n"
 
@@ -106,8 +123,9 @@ class RunSummary:
 
     def generate_summary(self) -> str:
         """Generate a brief summary of the run for documentation updates."""
-        total_tasks = len(self.tasks)
-        successful_tasks = sum(1 for r in self.results if r.success)
+        stats = self.get_task_stats()
+        total_tasks = stats["total"]
+        successful_tasks = stats["successful"]
         duration = self.end_time - self.start_time if self.end_time else "N/A"
         
         summary = f"### Run: {self.goal}\n\n"
@@ -133,6 +151,9 @@ class RunSummary:
 
     def to_json(self) -> Dict[str, Any]:
         duration = (self.end_time - self.start_time).total_seconds() if self.end_time else None
+        stats = self.get_task_stats()
+        total_tasks = stats["total"]
+        successful_tasks = stats["successful"]
         
         return {
             "goal": self.goal,
@@ -143,7 +164,8 @@ class RunSummary:
             "tasks": [t.model_dump() for t in self.tasks],
             "results": [r.model_dump() for r in self.results],
             "usage_by_model": {m: u.model_dump() for m, u in self.cost_tracker.usage_by_model.items()},
-            "status": "success" if sum(1 for r in self.results if r.success) == len(self.tasks) and len(self.tasks) > 0 else "failed"
+            "status": "success" if successful_tasks == total_tasks and total_tasks > 0 else "failed",
+            "task_stats": stats
         }
 
     def save(self, directory: str = "."):

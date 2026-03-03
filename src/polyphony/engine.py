@@ -315,8 +315,9 @@ class Orchestrator:
             console.print(f"[bold cyan]Run Summary:[/bold cyan] {summary_path}")
             
             # Show brief summary
-            total = len(self.run_summary.tasks)
-            successful = sum(1 for r in self.run_summary.results if r.success)
+            stats = self.run_summary.get_task_stats()
+            total = stats["total"]
+            successful = stats["successful"]
             if successful == total and total > 0:
                 console.print(f"[green][OK] All {total} task(s) completed successfully[/green]")
                 console.print(f"[dim]Total Cost: ${self.run_summary.cost_tracker.total_cost:.4f}[/dim]")
@@ -544,6 +545,7 @@ class Orchestrator:
                         return
                     else:
                         task.retry_count += 1
+                        result.success = False # Mark as failed because verification failed
                         reflection_prompt = self._generate_reflection_prompt(task, result)
                         task.context = f"{task.context or ''}\n{reflection_prompt}"
                         

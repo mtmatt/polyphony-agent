@@ -1,9 +1,10 @@
 import pytest
 from polyphony.engine import Orchestrator
-from polyphony.agent import AgentTask, AgentResult, BaseAgent
+from polyphony.agent import AgentTask, AgentResult, BaseAgent, CollaborativePlan, PlanReview, AgentRole
 
 class MockAgent(BaseAgent):
     def __init__(self):
+        super().__init__()
         self._model_name = "mock"
     @property
     def model_name(self): return self._model_name
@@ -18,6 +19,16 @@ class MockAgent(BaseAgent):
     def decompose_goal(self, goal): return []
     def classify_goal(self, goal): return "simple"
     def generate_commit_message(self, result): return "commit"
+
+    def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
+        return PlanReview(
+            original_plan_id="test",
+            reviewers=[role],
+            comments=[],
+            approved=True,
+            confidence_score=1.0,
+            consensus_reached=True
+        )
 
 def test_generate_reflection_prompt_syntax_error():
     agent = MockAgent()

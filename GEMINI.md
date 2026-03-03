@@ -75,3 +75,18 @@
 3.  **Collaborative Multi-Agent Planning:** Utilizing different specialized agent roles (e.g., Security Architect, Senior Dev, QA Specialist) during the `enter_plan_mode` phase for high-stakes features.
 4.  **Hardware-Accelerated Tooling:** Integration with local inference servers for sub-millisecond classification and simple task evaluation.
 
+# Technical Debt & Improvement Roadmap
+
+### Short-term (High Priority)
+1. **Add tool-calling to OllamaAgent**: This is the most critical gap. Without file operations and command execution, OllamaAgent cannot complete most tasks.
+2. **Add MCP support to OllamaAgent**: Unless MCP is added, OllamaAgent cannot access external tools.
+
+### Medium-term
+1. **Add sandbox parameter to OpenAIAgent**: For parity with GeminiAgent.
+2. **Implement token estimation for OllamaAgent**: Using `tiktoken` or similar.
+3. **Add structured output support to OllamaAgent**: Use Ollama's `format` parameter for JSON mode.
+
+### Long-term
+1. **Unify tool execution interface**: Consider extracting common tool execution logic into a shared module that all agents can use.
+2. **MCP tool execution consolidation**: MCP tool calling logic is duplicated between OpenAIAgent and could be shared.
+3. **Token tracking abstraction**: Create a consistent cross-agent usage tracking decorator.
