@@ -24,7 +24,7 @@ from ..run_summary import RunSummary
 
 # Get checkpoint directory from environment or default
 CHECKPOINT_DIR = Path(os.environ.get("POLYPHONY_CHECKPOINT_DIR", "./.polyphony/checkpoints"))
-RUN_SUMMARY_DIR = Path(os.environ.get("POLYPHONY_RUN_DIR", "./.polyphony/runs"))
+RUN_SUMMARY_DIR = Path(os.environ.get("POLYPHONY_RUN_DIR", "./logs"))
 
 app = FastAPI(
     title="Polyphony Agent Dashboard",
@@ -87,23 +87,27 @@ async def list_runs(
 
     # Load from checkpoint directory
     if CHECKPOINT_DIR.exists():
-        for checkpoint_file in sorted(CHECKPOINT_DIR.glob("*.json"), reverse=True):
+        for checkpoint_file in sorted(CHECKPOINT_DIR.glob("checkpoint-*.json"), reverse=True):
             try:
                 data = json.loads(checkpoint_file.read_text())
+                tasks = _flatten_tasks(data)
+                completed = [t for t in tasks if t.get("completed")]
+                all_task_ids = {t.get("id", t.get("task_id")) for t in tasks}
+                result_ids = {r.get("task_id") for r in data.get("results", [])}
+                status = "Completed" if (tasks and all_task_ids <= result_ids) else "In Progress"
+                model = next(
+                    (r.get("agent_model", "") for r in data.get("results", []) if r.get("agent_model")),
+                    data.get("model", "Unknown")
+                )
                 run_info = {
-                    "id": data.get("run_id", checkpoint_file.stem),
-                    "timestamp": data.get("timestamp", "")
-,                    "status": data.get("status", "Unknown")
-,
-                    "goal": data.get("goal", "Unknown goal")[:100] + "..." if len(data.get("goal", "")) > 100 else data.get("goal", "Unknown goal")
-,
-                    "completed_tasks": len([t for t in data.get("tasks", []) if t.get("completed")])
-,
-                    "total_tasks": len(data.get("tasks", []))
-,
-                    "model": data.get("model", "Unknown")
-,
-                    "progress_percentage": len([t for t in data.get("tasks", []) if t.get("completed")]) / len(data.get("tasks", [])) * 100 if data.get("tasks") else 0
+                    "id": data.get("run_id", checkpoint_file.stem.removeprefix("checkpoint-")),
+                    "timestamp": data.get("start_time", data.get("last_updated", "")),
+                    "status": data.get("status", status),
+                    "goal": (data.get("goal", "Unknown goal")[:100] + "...") if len(data.get("goal", "")) > 100 else data.get("goal", "Unknown goal"),
+                    "completed_tasks": len(completed),
+                    "total_tasks": len(tasks),
+                    "model": model,
+                    "progress_percentage": len(completed) / len(tasks) * 100 if tasks else 0,
                 }
 
                 # Apply filters
@@ -118,22 +122,25 @@ async def list_runs(
             except Exception:
                 continue
 
-    # Also load from run summaries
+    # Also load from run summaries (logs/ directory)
     if RUN_SUMMARY_DIR.exists():
         for summary_file in sorted(RUN_SUMMARY_DIR.glob("*.json"), reverse=True)[:limit - len(runs)]:
             try:
                 data = json.loads(summary_file.read_text())
-                run_id = data.get("run_id", summary_file.stem)
+                # Use filename stem as ID since log files have run_id=None
+                run_id = data.get("run_id") or summary_file.stem
                 if not any(r["id"] == run_id for r in runs):
+                    tasks = _flatten_tasks(data)
+                    completed = [t for t in tasks if t.get("completed") or t.get("success")]
                     runs.append({
                         "id": run_id,
-                        "timestamp": data.get("timestamp", ""),
+                        "timestamp": data.get("start_time", data.get("timestamp", "")),
                         "status": data.get("status", "Completed"),
-                        "goal": data.get("goal", "Unknown goal")[:100] + "...",
-                        "completed_tasks": len(data.get("results", [])),
-                        "total_tasks": len(data.get("results", [])),
+                        "goal": (data.get("goal", "Unknown goal")[:100] + "...") if len(data.get("goal", "")) > 100 else data.get("goal", "Unknown goal"),
+                        "completed_tasks": len(completed),
+                        "total_tasks": len(tasks),
                         "model": data.get("model", "Unknown"),
-                        "progress_percentage": 100.0
+                        "progress_percentage": 100.0 if data.get("status") == "success" else (len(completed) / len(tasks) * 100 if tasks else 0),
                     })
             except Exception:
                 continue
@@ -144,27 +151,37 @@ async def list_runs(
 @app.get("/api/runs/{run_id}")
 async def get_run(run_id: str) -> JSONResponse:
     """Get detailed information about a specific run."""
-    checkpoint_path = CHECKPOINT_DIR / f"{run_id}.json"
-    summary_path = RUN_SUMMARY_DIR / f"{run_id}.json"
+    # Try checkpoint file first (checkpoint-{run_id}.json)
+    checkpoint_path = CHECKPOINT_DIR / f"checkpoint-{run_id}.json"
+    # Fallback: exact match in summary dir (e.g. filename-as-id from logs/)
+    summary_exact = RUN_SUMMARY_DIR / f"{run_id}.json"
 
     run_data = None
 
     if checkpoint_path.exists():
         run_data = json.loads(checkpoint_path.read_text())
-    elif summary_path.exists():
-        run_data = json.loads(summary_path.read_text())
+    elif summary_exact.exists():
+        run_data = json.loads(summary_exact.read_text())
     else:
+        # Try globbing logs/ for filename match (run_id may be a full filename stem)
+        if RUN_SUMMARY_DIR.exists():
+            matches = list(RUN_SUMMARY_DIR.glob(f"{run_id}.json"))
+            if matches:
+                run_data = json.loads(matches[0].read_text())
+
+    if run_data is None:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    # Build task dependency graph
-    tasks = run_data.get("tasks", run_data.get("results", []))
+    # Build a unified flat task list regardless of data format
+    tasks = _flatten_tasks(run_data)
     dependency_graph = build_dependency_graph(tasks)
 
     return JSONResponse(content={
         **run_data,
+        "tasks": tasks,
         "dependency_graph": dependency_graph,
         "timeline": build_timeline(tasks),
-        "metrics": calculate_metrics(run_data)
+        "metrics": calculate_metrics(run_data, tasks)
     })
 
 
@@ -187,7 +204,7 @@ async def compare_runs(run_id: str, other_run_id: str) -> JSONResponse:
     return JSONResponse(content=comparison)
 
 
-@app.get("/api/runs/{run_id}/stream")
+@app.websocket("/api/runs/{run_id}/stream")
 async def websocket_endpoint(websocket: WebSocket, run_id: str):
     """WebSocket endpoint for real-time run updates."""
     await manager.connect(websocket, run_id)
@@ -285,7 +302,7 @@ async def search_runs(
         # Get full run data to search in tasks
         try:
             full_data = await get_run_data(run["id"])
-            tasks = full_data.get("tasks", [])
+            tasks = _flatten_tasks(full_data) if full_data else []
             for task in tasks:
                 task_desc = task.get("description", "").lower()
                 if query_lower in task_desc:
@@ -306,6 +323,52 @@ async def search_runs(
 
 
 # Helper functions
+
+def _flatten_tasks(data: dict) -> list:
+    """Return a flat list of task dicts from either checkpoint or summary format.
+
+    Checkpoints store tasks in ``tasks_by_goal`` (dict: goal → list of task
+    dicts) and completed results in ``results`` (list of AgentResult dicts
+    keyed by ``task_id``).  Summary files store a flat ``tasks`` list.
+    """
+    # Prefer flat list when it's non-empty
+    flat = data.get("tasks", [])
+
+    # Checkpoint format: tasks_by_goal is the authoritative task list
+    tasks_by_goal = data.get("tasks_by_goal", {})
+    if tasks_by_goal:
+        flat = []
+        for goal_tasks in tasks_by_goal.values():
+            flat.extend(goal_tasks)
+
+    if not flat:
+        # Fall back to results list (log summary format)
+        flat = data.get("results", [])
+
+    # Enrich with result data when both sources are present
+    results_by_id: dict = {}
+    for r in data.get("results", []):
+        tid = r.get("task_id")
+        if tid:
+            results_by_id[tid] = r
+
+    if results_by_id:
+        enriched = []
+        for task in flat:
+            tid = task.get("id", task.get("task_id", ""))
+            result = results_by_id.get(tid, {})
+            merged = {**task}
+            if result:
+                merged.setdefault("completed", result.get("success", False))
+                merged.setdefault("error", result.get("error"))
+                merged.setdefault("duration_seconds", result.get("duration_seconds", 0))
+                merged.setdefault("output", result.get("output", ""))
+                merged.setdefault("agent_model", result.get("agent_model", ""))
+            enriched.append(merged)
+        return enriched
+
+    return flat
+
 
 def build_dependency_graph(tasks):
     """Build a Mermaid-compatible dependency graph from tasks."""
@@ -367,9 +430,10 @@ def build_timeline(tasks):
     return events
 
 
-def calculate_metrics(run_data):
+def calculate_metrics(run_data, tasks: Optional[list] = None):
     """Calculate metrics for a run."""
-    tasks = run_data.get("tasks", run_data.get("results", []))
+    if tasks is None:
+        tasks = _flatten_tasks(run_data)
 
     total_duration = sum(
         t.get("duration_seconds", 0) for t in tasks
@@ -394,13 +458,17 @@ def calculate_metrics(run_data):
 
 async def get_run_data(run_id: str) -> Optional[dict]:
     """Load run data from checkpoint or summary."""
-    checkpoint_path = CHECKPOINT_DIR / f"{run_id}.json"
-    summary_path = RUN_SUMMARY_DIR / f"{run_id}.json"
+    checkpoint_path = CHECKPOINT_DIR / f"checkpoint-{run_id}.json"
+    summary_exact = RUN_SUMMARY_DIR / f"{run_id}.json"
 
     if checkpoint_path.exists():
         return json.loads(checkpoint_path.read_text())
-    elif summary_path.exists():
-        return json.loads(summary_path.read_text())
+    elif summary_exact.exists():
+        return json.loads(summary_exact.read_text())
+    elif RUN_SUMMARY_DIR.exists():
+        matches = list(RUN_SUMMARY_DIR.glob(f"{run_id}.json"))
+        if matches:
+            return json.loads(matches[0].read_text())
     return None
 
 
