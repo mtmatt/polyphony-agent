@@ -354,7 +354,7 @@ class TestMemoryAugmentedPrompt:
             "r1", "Similar task", "strategy1", "success", []
         )
         memory_store.save_user_preference(
-            UserPreference("style", "detailed", 0.8)
+            UserPreference(category="style", preference="detailed", confidence=0.8)
         )
 
         builder = MemoryAugmentedPrompt(memory_store)

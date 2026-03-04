@@ -45,6 +45,9 @@ class RecoveryMockAgent(BaseAgent):
     def classify_goal(self, goal: str):
         return "simple"
 
+    def review_plan(self, plan, role):
+        return {"approved": True, "comments": []}
+
 def test_model_fallback_on_retry():
     """
     Verifies that the orchestrator falls back to the pro model on retry
