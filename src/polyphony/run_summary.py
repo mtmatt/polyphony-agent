@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from .agent import AgentTask, AgentResult, AgentAction
@@ -171,7 +172,6 @@ class RunSummary:
     def save(self, directory: str = "."):
         self.finalize()
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        import re
         # Sanitize slug: keep only alphanumeric and hyphens, replace others with hyphens
         slug = re.sub(r'[^a-z0-9\-]', '-', self.goal.lower())
         slug = re.sub(r'-+', '-', slug).strip('-')[:30]

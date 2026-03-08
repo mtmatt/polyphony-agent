@@ -286,8 +286,10 @@ async function loadRuns() {
 function renderRunList(runs) {
   const el = document.getElementById('run-list');
   if (!runs.length) { el.innerHTML = '<div class="empty">No runs found</div>'; return; }
-  el.innerHTML = runs.map(r => `
-    <div class="run-item${r.id === currentRunId ? ' active' : ''}" onclick="openRun('${esc(r.id)}')">
+  el.innerHTML = runs.map(r => {
+    const safeId = esc(r.id).replace(/'/g, "\\'");
+    return `
+    <div class="run-item${r.id === currentRunId ? ' active' : ''}" onclick="openRun('${safeId}')">
       <div class="run-goal">${esc(r.goal)}</div>
       <div class="run-meta">
         <span class="dot ${statusDot(r.status)}"></span>
@@ -297,7 +299,8 @@ function renderRunList(runs) {
       <div class="progress-track" style="margin-top:5px">
         <div class="progress-fill" style="width:${Math.min(100, r.progress_percentage || 0)}%"></div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // Search
@@ -340,12 +343,15 @@ async function showOverview() {
         <div class="section">
           <div class="section-header">Recent Runs</div>
           <div class="section-body" id="recent-runs-body">
-            ${allRuns.slice(0, 12).map(r => `
-              <div class="recent-run-row" onclick="openRun('${esc(r.id)}')">
+            ${allRuns.slice(0, 12).map(r => {
+              const safeId = esc(r.id).replace(/'/g, "\\'");
+              return `
+              <div class="recent-run-row" onclick="openRun('${safeId}')">
                 <span class="dot ${statusDot(r.status)}"></span>
                 <span class="recent-run-goal">${esc(r.goal)}</span>
                 <span class="recent-run-ts">${fmt.ts(r.timestamp).split(',')[0]}</span>
-              </div>`).join('') || '<div class="empty">No runs</div>'}
+              </div>`;
+            }).join('') || '<div class="empty">No runs</div>'}
           </div>
         </div>
 
@@ -388,19 +394,8 @@ function renderModelBars(models) {
 }
 
 function renderDayChart(days) {
-  if (!days || !Object.keys(days).length) return '<div class="empty">No activity data</div>';
-  const entries = Object.entries(days).sort((a,b) => a[0] < b[0] ? -1 : 1).slice(-30);
-  const max = Math.max(...entries.map(e => e[1]), 1);
-  const barW = Math.max(10, Math.floor(600 / entries.length) - 2);
-  const bars = entries.map(([day, count]) => {
-    const h = Math.max(3, Math.round(count / max * 50));
-    return `<title>${esc(day)}: ${count}</title><rect x="0" y="${50-h}" width="${barW}" height="${h}" rx="2" fill="var(--accent)" opacity=".8"/>`;
-  }).join('');
-  const total = barW + 2;
-  return `<svg viewBox="0 0 ${entries.length * total} 60" style="width:100%;height:60px;overflow:visible">
-    ${entries.map(([d,c],i) => `<g transform="translate(${i*total},0)">${bars.split('</rect>')[i] ? '<rect x="0" y="'+`${50-Math.max(3,Math.round(c/max*50))}`+'" width="'+barW+'" height="'+`${Math.max(3,Math.round(c/max*50))}`+'" rx="2" fill="var(--accent)" opacity=".8"><title>'+esc(d)+': '+c+'</title></rect>' : ''}</g>`).join('')}
-  </svg>`;
-  // simpler rewrite:
+  // This function is patched by patchDayChart at the end of the script
+  return '';
 }
 
 // ─────────────────────────────────────────────

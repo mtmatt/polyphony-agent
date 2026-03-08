@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import re
+import uvicorn
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,7 +36,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -74,15 +75,8 @@ async def get_ui() -> HTMLResponse:
     html_content = Path(__file__).parent.joinpath("static", "index.html").read_text()
     return HTMLResponse(content=html_content)
 
-
-@app.get("/api/runs")
-async def list_runs(
-    limit: int = Query(100, ge=1, le=1000),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
-    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
-) -> JSONResponse:
-    """List all available runs with optional filtering."""
+async def _get_all_runs(limit: int = 100) -> list:
+    """Helper to load all runs from checkpoints and summaries."""
     runs = []
 
     # Load from checkpoint directory
@@ -94,7 +88,7 @@ async def list_runs(
                 completed = [t for t in tasks if t.get("completed")]
                 all_task_ids = {t.get("id", t.get("task_id")) for t in tasks}
                 result_ids = {r.get("task_id") for r in data.get("results", [])}
-                status = "Completed" if (tasks and all_task_ids <= result_ids) else "In Progress"
+                computed_status = "Completed" if (tasks and all_task_ids <= result_ids) else "In Progress"
                 model = next(
                     (r.get("agent_model", "") for r in data.get("results", []) if r.get("agent_model")),
                     data.get("model", "Unknown")
@@ -102,29 +96,23 @@ async def list_runs(
                 run_info = {
                     "id": data.get("run_id", checkpoint_file.stem.removeprefix("checkpoint-")),
                     "timestamp": data.get("start_time", data.get("last_updated", "")),
-                    "status": data.get("status", status),
+                    "status": data.get("status", computed_status),
                     "goal": (data.get("goal", "Unknown goal")[:100] + "...") if len(data.get("goal", "")) > 100 else data.get("goal", "Unknown goal"),
                     "completed_tasks": len(completed),
                     "total_tasks": len(tasks),
                     "model": model,
                     "progress_percentage": len(completed) / len(tasks) * 100 if tasks else 0,
+                    "file_path": str(checkpoint_file)
                 }
-
-                # Apply filters
-                if status and run_info["status"].lower() != status.lower():
-                    continue
-                if start_date and datetime.fromisoformat(run_info["timestamp"]) < start_date:
-                    continue
-                if end_date and datetime.fromisoformat(run_info["timestamp"]) > end_date:
-                    continue
-
                 runs.append(run_info)
             except Exception:
                 continue
 
     # Also load from run summaries (logs/ directory)
     if RUN_SUMMARY_DIR.exists():
-        for summary_file in sorted(RUN_SUMMARY_DIR.glob("*.json"), reverse=True)[:limit - len(runs)]:
+        for summary_file in sorted(RUN_SUMMARY_DIR.glob("*.json"), reverse=True):
+            if len(runs) >= limit + 100: # Over-fetch slightly to allow for filtering
+                break
             try:
                 data = json.loads(summary_file.read_text())
                 # Use filename stem as ID since log files have run_id=None
@@ -141,11 +129,35 @@ async def list_runs(
                         "total_tasks": len(tasks),
                         "model": data.get("model", "Unknown"),
                         "progress_percentage": 100.0 if data.get("status") == "success" else (len(completed) / len(tasks) * 100 if tasks else 0),
+                        "file_path": str(summary_file)
                     })
             except Exception:
                 continue
+    
+    return runs
 
-    return JSONResponse(content={"runs": runs[:limit], "total": len(runs)})
+@app.get("/api/runs")
+async def list_runs(
+    limit: int = Query(100, ge=1, le=1000),
+    status: Optional[str] = Query(None, description="Filter by status"),
+    start_date: Optional[datetime] = Query(None, description="Filter by start date"),
+    end_date: Optional[datetime] = Query(None, description="Filter by end date"),
+) -> JSONResponse:
+    """List all available runs with optional filtering."""
+    all_runs_data = await _get_all_runs(limit=limit)
+    filtered_runs = []
+
+    for run_info in all_runs_data:
+        # Apply filters
+        if status and run_info["status"].lower() != status.lower():
+            continue
+        if start_date and datetime.fromisoformat(run_info["timestamp"]) < start_date:
+            continue
+        if end_date and datetime.fromisoformat(run_info["timestamp"]) > end_date:
+            continue
+        filtered_runs.append(run_info)
+
+    return JSONResponse(content={"runs": filtered_runs[:limit], "total": len(filtered_runs)})
 
 
 @app.get("/api/runs/{run_id}")
@@ -208,15 +220,21 @@ async def compare_runs(run_id: str, other_run_id: str) -> JSONResponse:
 async def websocket_endpoint(websocket: WebSocket, run_id: str):
     """WebSocket endpoint for real-time run updates."""
     await manager.connect(websocket, run_id)
+    last_mtime = 0
     try:
         while True:
-            # Send current run status
+            # Check if file changed
             try:
-                run_data = await get_run_data(run_id)
-                await websocket.send_json({
-                    "type": "status_update",
-                    "data": run_data
-                })
+                checkpoint_path = CHECKPOINT_DIR / f"checkpoint-{run_id}.json"
+                if checkpoint_path.exists():
+                    mtime = checkpoint_path.stat().st_mtime
+                    if mtime > last_mtime:
+                        run_data = json.loads(checkpoint_path.read_text())
+                        await websocket.send_json({
+                            "type": "status_update",
+                            "data": run_data
+                        })
+                        last_mtime = mtime
             except Exception:
                 pass
 
@@ -241,17 +259,12 @@ async def get_stats() -> JSONResponse:
         "success_rate": 0.0
     }
 
-    runs = await list_runs(limit=10000)
-    runs_data = json.loads(runs.body)["runs"]
-
+    runs_data = await _get_all_runs(limit=1000)
     stats["total_runs"] = len(runs_data)
-
-    total_duration = timedelta()
-    completed_runs = 0
 
     for run in runs_data:
         status = run.get("status", "").lower()
-        if status == "success":
+        if status == "success" or status == "completed":
             stats["successful_runs"] += 1
         elif status in ["error", "failed"]:
             stats["failed_runs"] += 1
@@ -286,17 +299,25 @@ async def search_runs(
     results = []
     query_lower = q.lower()
 
-    runs = await list_runs(limit=10000)
-    runs_data = json.loads(runs.body)["runs"]
+    runs_data = await _get_all_runs(limit=1000)
 
+    # To optimize, we'll only load full data for a limited number of runs
+    # prioritizing those that match in the goal first.
+    runs_to_inspect = []
     for run in runs_data:
         score = 0
-        matches = []
-
-        # Search in goal
         goal = run.get("goal", "").lower()
         if query_lower in goal:
             score += 10
+        runs_to_inspect.append((score, run))
+    
+    # Sort by goal match score
+    runs_to_inspect.sort(key=lambda x: x[0], reverse=True)
+
+    # Cap full-data search to first 50 runs to avoid performance issues
+    for score, run in runs_to_inspect[:50]:
+        matches = []
+        if score > 0:
             matches.append("goal")
 
         # Get full run data to search in tasks
@@ -524,7 +545,6 @@ def compare_metrics(run1: dict, run2: dict) -> dict:
 
 def start_server(host: str = "0.0.0.0", port: int = 8000):
     """Start the FastAPI server."""
-    import uvicorn
     uvicorn.run(app, host=host, port=port)
 
 

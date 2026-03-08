@@ -2,7 +2,9 @@
 
 import json
 import httpx
-from typing import Optional
+import re
+import asyncio
+from typing import Optional, Any
 from pydantic import BaseModel
 
 from .agent import (
@@ -30,7 +32,9 @@ class OllamaAgent(BaseAgent):
         model_name: str = "llama3.1",
         base_url: str = "http://localhost:11434",
         mcp_servers: Optional[list] = None,
+        **kwargs
     ):
+        super().__init__(**kwargs)
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = model_name
@@ -124,15 +128,8 @@ class OllamaAgent(BaseAgent):
         # Try each MCP client until we find one that has this tool
         for client_name, client in self.mcp_clients.items():
             try:
-                # MCP client is still async, so we use a helper to run it sync
-                import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                result = loop.run_until_complete(client.call_tool(function_name, arguments))
+                # Use asyncio.run for isolated calls in a thread
+                result = asyncio.run(client.call_tool(function_name, arguments))
                 
                 # Extract content from result
                 if isinstance(result, dict):
@@ -148,7 +145,8 @@ class OllamaAgent(BaseAgent):
                     return json.dumps(result)
                 return str(result)
             except Exception as e:
-                # Tool not found in this client or error occurred, try next
+                # Log error and try next client if it's just a tool not found
+                logger.debug("Tool call failed in client", client=client_name, error=str(e))
                 continue
 
         return f"Error: Tool '{function_name}' not found in any MCP client."
@@ -220,7 +218,6 @@ class OllamaAgent(BaseAgent):
             )
             content = response.get("message", {}).get("content", "")
             # Try to extract JSON
-            import re
             match = re.search(r'\{.*\}', content, re.DOTALL)
             if match:
                 task_data = json.loads(match.group(0))
@@ -238,13 +235,7 @@ class OllamaAgent(BaseAgent):
         """Execute a task using Ollama with tool-calling support."""
         # Start MCP clients if available
         if self.mcp_clients:
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._start_mcp_clients())
+            asyncio.run(self._start_mcp_clients())
 
         try:
             messages = [
@@ -267,10 +258,6 @@ class OllamaAgent(BaseAgent):
 
             while iteration < max_iterations:
                 iteration += 1
-
-                if progress and hasattr(progress, 'update'):
-                    # progress is a callback or an object. Based on orchestrator, it's a callback.
-                    pass
 
                 try:
                     response = self._chat_with_tools(
@@ -330,13 +317,7 @@ class OllamaAgent(BaseAgent):
         finally:
             # Clean up MCP clients
             if self.mcp_clients:
-                import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                loop.run_until_complete(self._stop_mcp_clients())
+                asyncio.run(self._stop_mcp_clients())
 
     def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
         """Review a plan from a specific role perspective."""
@@ -360,7 +341,6 @@ class OllamaAgent(BaseAgent):
             content = response.get("message", {}).get("content", "")
             
             # Try to extract JSON
-            import re
             match = re.search(r'\{.*\}', content, re.DOTALL)
             if match:
                 review_data = json.loads(match.group(0))
@@ -370,7 +350,7 @@ class OllamaAgent(BaseAgent):
                         comment=c.get("comment", ""),
                         severity=c.get("severity", "suggestion"),
                         target_task_id=c.get("target_task_id"),
-                        suggested_changes=c.get("suggested_changes"),
+                        suggest_changes=c.get("suggested_changes"),
                     )
                     for c in review_data.get("comments", [])
                 ]

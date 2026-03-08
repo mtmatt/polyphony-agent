@@ -13,10 +13,11 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from .agent import BaseAgent, AgentTask, AgentResult
 from .gemini_agent import GeminiAgent
 from .run_summary import RunSummary
-from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs
+from .utils import get_repo_map, is_git_repo, should_include_repo_map, extract_relevant_dirs, git_commit, git_get_modified_files
 from .checkpoint import RunCheckpoint
 from .logging import get_logger
 from .metrics import collector as metrics_collector
+from .cost import CostTracker
 
 logger = get_logger(__name__)
 console = Console()
@@ -63,8 +64,6 @@ class DependencyResolver:
                 del pending_tasks[task.id]
         
         return batches
-
-from .cost import CostTracker
 
 class Orchestrator:
     def __init__(self, planner: BaseAgent, executor: Optional[BaseAgent] = None, qa_agent: Optional[BaseAgent] = None, auto_commit: bool = True, parallel: bool = False, budget_limit: float = 0.0, run_id: Optional[str] = None, checkpoint_dir: str = ".polyphony/checkpoints", max_run_duration: int = 7200):
@@ -270,7 +269,7 @@ class Orchestrator:
             if not remaining_tasks:
                 return
 
-            # 4. Multi-layered progress
+            # 5. Multi-layered progress
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -399,6 +398,21 @@ class Orchestrator:
             
         return "\n---\n".join(history_parts)
 
+    async def _auto_commit(self, agent: BaseAgent, task: AgentTask, result: AgentResult, progress: Progress, task_layer: Any):
+        """Helper to handle auto-committing results."""
+        if self.auto_commit and is_git_repo():
+            progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
+            commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
+            self._sync_usage()
+            git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
+            if git_res_dict.get("success"):
+                result.commit_hash = git_res_dict.get("commit_hash")
+                console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
+                logger.info("git_commit_success", task_id=task.id, commit_hash=result.commit_hash)
+            else:
+                console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
+                logger.warning("git_commit_failed", task_id=task.id, error=git_res_dict.get('message'))
+
     async def execute_with_verification(self, task: AgentTask, progress: Progress, global_task, task_layer):
         """
         Executes a task and verifies it using a verification command if provided.
@@ -431,8 +445,6 @@ class Orchestrator:
         elif task.complexity == "complex":
             agent.model_name = agent.pro_model_name
         
-        from .utils import git_get_modified_files, git_commit
-
         try:
             while task.retry_count <= task.max_retries:
                 logger.info("executing_task", task_id=task.id, retry_count=task.retry_count, agent_model=agent.model_name)
@@ -519,18 +531,7 @@ class Orchestrator:
                     
                     if return_code == 0:
                         # Step 3: Git Commit (Optional)
-                        if self.auto_commit and is_git_repo():
-                            progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                            commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
-                            self._sync_usage()
-                            git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
-                            if git_res_dict.get("success"):
-                                result.commit_hash = git_res_dict.get("commit_hash")
-                                console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
-                                logger.info("git_commit_success", task_id=task.id, commit_hash=result.commit_hash)
-                            else:
-                                console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
-                                logger.warning("git_commit_failed", task_id=task.id, error=git_res_dict.get('message'))
+                        await self._auto_commit(agent, task, result, progress, task_layer)
                         
                         self.run_summary.add_result(task, result)
                         task.status = "completed"
@@ -555,18 +556,7 @@ class Orchestrator:
                         self.run_summary.add_result(task, result)
                 else:
                     # No verification command, assume success if execution was successful
-                    if self.auto_commit and is_git_repo():
-                        progress.update(task_layer, completed=90, description=f"[cyan]Committing: {task.id}")
-                        commit_msg = await asyncio.to_thread(agent.generate_commit_message, result)
-                        self._sync_usage()
-                        git_res_dict = await asyncio.to_thread(git_commit, commit_msg)
-                        if git_res_dict.get("success"):
-                            result.commit_hash = git_res_dict.get("commit_hash")
-                            console.print(f"  [dim][git][/dim] {git_res_dict.get('message')}")
-                            logger.info("git_commit_success", task_id=task.id, commit_hash=result.commit_hash)
-                        else:
-                            console.print(f"  [dim][git][/dim] [red]{git_res_dict.get('message')}[/red]")
-                            logger.warning("git_commit_failed", task_id=task.id, error=git_res_dict.get('message'))
+                    await self._auto_commit(agent, task, result, progress, task_layer)
                     
                     self.run_summary.add_result(task, result)
                     task.status = "completed"
