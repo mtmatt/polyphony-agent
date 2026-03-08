@@ -1,32 +1,61 @@
 # Polyphony Agent Configuration Example
+# Copy to polyphony.toml and edit as needed.
 
 # Global settings
-auto_commit = false
-budget_limit = 5.0
+auto_commit      = false
+budget_limit     = 5.0    # USD; 0 = unlimited
+max_run_duration = 7200   # seconds (default: 2 hours)
 
-# Individual settings for planner and executor
+# --- Gemini + OpenAI mix ---
 [planner]
-provider = "gemini"
-model = "gemini-2.5-pro-exp"
+provider    = "gemini"
+model       = "gemini-2.5-pro-exp"
 flash_model = "gemini-2.5-flash-exp"
 
 [executor]
-provider = "openai"
-model = "gpt-4o"
+provider    = "openai"
+model       = "gpt-4o"
 flash_model = "gpt-4o-mini"
-base_url = "http://localhost:11434/v1" # Example for Ollama
-api_key = "ollama"
 
-# Fallback: Flat structure (sets both planner and executor to same values)
-# provider = "gemini"
-# model = "gemini-2.5-flash-exp"
-
-# Claude CLI example (requires `claude` CLI installed and authenticated)
+# --- Gemini only ---
 # [planner]
-# provider = "claude"
-# model = "claude-opus-4-5"
+# provider    = "gemini"
+# model       = "gemini-2.5-pro-exp"
+# flash_model = "gemini-2.5-flash-exp"
 #
 # [executor]
+# provider    = "gemini"
+# model       = "gemini-2.5-flash-exp"
+
+# --- Claude CLI (requires `claude` CLI installed and authenticated) ---
+# [planner]
 # provider = "claude"
-# model = "claude-sonnet-4-5"
-# flash_model = "claude-haiku-3-5"
+# model    = "claude-opus-4-6"
+#
+# [executor]
+# provider    = "claude"
+# model       = "claude-sonnet-4-6"
+# flash_model = "claude-haiku-4-5-20251001"
+
+# --- Ollama (local) via OpenAI-compatible API ---
+# [planner]
+# provider = "openai"
+# model    = "llama3"
+# base_url = "http://localhost:11434/v1"
+# api_key  = "ollama"
+#
+# [executor]
+# provider = "ollama"
+# model    = "llama3"
+# base_url = "http://localhost:11434"
+
+# --- Flat structure (sets both planner and executor to the same values) ---
+# provider    = "gemini"
+# model       = "gemini-2.5-flash-exp"
+# flash_model = "gemini-2.5-flash-exp"
+
+# --- MCP tool servers ---
+# [[mcp_servers]]
+# command = "npx"
+# args    = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"]
+# # env = { API_KEY = "value" }

@@ -76,11 +76,13 @@ budget_limit = 5.0        # USD; 0 = unlimited
 
 [planner]
 provider    = "gemini"
-model       = "gemini-3-flash-preview"
+model       = "gemini-2.5-pro-exp"
+flash_model = "gemini-2.5-flash-exp"
 
 [executor]
-provider    = "gemini"
-model       = "gemini-3-flash-preview"
+provider    = "openai"
+model       = "gpt-4o"
+flash_model = "gpt-4o-mini"
 ```
 
 ### Provider options
