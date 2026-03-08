@@ -4,9 +4,7 @@ import re
 import ast
 import json
 import inspect
-from typing import Optional, List, Dict, Any, Set, Tuple, Union
-from dataclasses import dataclass, field
-from datetime import datetime
+from .token_estimation import estimate_tokens
 
 def is_git_repo(path: str = ".") -> bool:
     try:
@@ -118,10 +116,14 @@ def replace_text(path: str, old: str, new: str) -> str:
     except Exception as e:
         return f"Error updating {path}: {e}"
 
-def run_command(command: str) -> str:
+def run_command(command: str, sandbox: bool = False) -> str:
     """
     Runs a shell command and returns output.
+    If sandbox is True, it will attempt to run in a restricted environment if supported.
     """
+    if sandbox:
+        raise NotImplementedError("Secure sandboxing is not yet implemented. Use sandbox=False for now.")
+    
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:

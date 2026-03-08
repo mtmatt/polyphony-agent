@@ -57,3 +57,23 @@ def test_git_commit_error(tmp_path):
     assert result["success"] is False
     assert "Git error:" in result["message"]
     assert "not a git repository" in result["message"]
+
+def test_run_command_sandbox_not_implemented():
+    """Verify that sandbox=True raises NotImplementedError (Issue 4)."""
+    from polyphony.utils import run_command
+    with pytest.raises(NotImplementedError) as excinfo:
+        run_command("ls", sandbox=True)
+    assert "Secure sandboxing is not yet implemented" in str(excinfo.value)
+
+def test_run_command_normal():
+    """Verify that run_command works without sandbox."""
+    from polyphony.utils import run_command
+    result = run_command("echo 'hello'")
+    assert "hello" in result
+    assert "Output:" in result
+
+def test_estimate_tokens_fallback():
+    """Verify that estimate_tokens is still available and working."""
+    from polyphony.utils import estimate_tokens
+    tokens = estimate_tokens("hello world")
+    assert tokens > 0

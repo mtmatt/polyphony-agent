@@ -3,9 +3,10 @@
 import json
 import httpx
 import re
-import asyncio
-from typing import Optional, Any
+import os
+from typing import Optional, Any, List, Dict
 from pydantic import BaseModel
+from rich.console import Console
 
 from .agent import (
     AgentTask,
@@ -17,12 +18,15 @@ from .agent import (
     PlanReview,
     CollaborativePlan,
     ConsensusVote,
+    TokenUsage
 )
-from .mcp_client import MCPClient
+from .tool_executor import ToolExecutor
 from .logging import get_logger
+from .utils import extract_json
+from .token_estimation import estimate_tokens, estimate_messages_tokens
 
 logger = get_logger(__name__)
-
+console = Console()
 
 class OllamaAgent(BaseAgent):
     """Agent that uses a local Ollama server for inference with tool-calling support."""
@@ -30,29 +34,27 @@ class OllamaAgent(BaseAgent):
     def __init__(
         self,
         model_name: str = "llama3.1",
+        pro_model_name: Optional[str] = None,
+        flash_model_name: Optional[str] = None,
         base_url: str = "http://localhost:11434",
         mcp_servers: Optional[list] = None,
+        sandbox: bool = False,
         **kwargs
     ):
-        super().__init__(**kwargs)
+        super().__init__()
         self._model_name = model_name
-        self._pro_model_name = model_name
-        self._flash_model_name = model_name
+        self._pro_model_name = pro_model_name or model_name
+        self._flash_model_name = flash_model_name or model_name
         self.base_url = base_url.rstrip("/")
-        self.mcp_clients: dict[str, MCPClient] = {}
-        self.available_tools: list[dict] = []
-
-        # Initialize MCP clients if provided
-        if mcp_servers:
-            for server_config in mcp_servers:
-                mcp_client = MCPClient(server_config)
-                self.mcp_clients[server_config.name] = mcp_client
+        self.sandbox = sandbox
+        self.tool_executor = ToolExecutor(mcp_servers, sandbox)
+        self.context = ""
 
         logger.info(
             "OllamaAgent initialized",
             model=model_name,
             base_url=base_url,
-            mcp_servers=list(self.mcp_clients.keys()),
+            sandbox=sandbox,
         )
 
     @property
@@ -71,93 +73,14 @@ class OllamaAgent(BaseAgent):
     def flash_model_name(self) -> str:
         return self._flash_model_name
 
-    async def _start_mcp_clients(self):
-        """Start all MCP clients and discover available tools."""
-        self.available_tools = []
-
-        for name, client in self.mcp_clients.items():
-            try:
-                await client.start()
-                tools = await client.list_tools()
-                for tool in tools:
-                    # Convert MCP tool format to Ollama-compatible format
-                    ollama_tool = {
-                        "type": "function",
-                        "function": {
-                            "name": tool["name"],
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("inputSchema", {"type": "object"}),
-                        },
-                    }
-                    self.available_tools.append(ollama_tool)
-                logger.info(
-                    "MCP client started and tools discovered",
-                    client=name,
-                    tool_count=len(tools),
-                )
-            except Exception as e:
-                logger.error("Failed to start MCP client", client=name, error=str(e))
-
-    async def _stop_mcp_clients(self):
-        """Stop all MCP clients."""
-        for name, client in self.mcp_clients.items():
-            try:
-                await client.stop()
-                logger.debug("MCP client stopped", client=name)
-            except Exception as e:
-                logger.error("Error stopping MCP client", client=name, error=str(e))
-
-    def _call_tool(self, tool_call: dict) -> str:
-        """Execute a tool call via MCP client."""
-        function_name = tool_call.get("function", {}).get("name", "")
-        arguments = tool_call.get("function", {}).get("arguments", {})
-
-        # Parse arguments if they're a string
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError:
-                return f"Error: Could not parse tool arguments: {arguments}"
-
-        logger.debug(
-            "Calling tool",
-            function=function_name,
-            arguments=arguments,
-        )
-
-        # Try each MCP client until we find one that has this tool
-        for client_name, client in self.mcp_clients.items():
-            try:
-                # Use asyncio.run for isolated calls in a thread
-                result = asyncio.run(client.call_tool(function_name, arguments))
-                
-                # Extract content from result
-                if isinstance(result, dict):
-                    if "content" in result:
-                        content = result["content"]
-                        if isinstance(content, list):
-                            text_parts = [
-                                part["text"] for part in content 
-                                if part.get("type") == "text"
-                            ]
-                            return "\n".join(text_parts)
-                        return str(content)
-                    return json.dumps(result)
-                return str(result)
-            except Exception as e:
-                # Log error and try next client if it's just a tool not found
-                logger.debug("Tool call failed in client", client=client_name, error=str(e))
-                continue
-
-        return f"Error: Tool '{function_name}' not found in any MCP client."
-
     def _chat_with_tools(
         self,
         messages: list[dict],
         tools: Optional[list[dict]] = None,
+        format: Optional[str] = None,
         temperature: float = 0.7,
     ) -> dict:
-        """Send a chat request to Ollama with optional tool support."""
+        """Send a chat request to Ollama with optional tool support and structured output."""
         url = f"{self.base_url}/api/chat"
         
         payload = {
@@ -171,11 +94,42 @@ class OllamaAgent(BaseAgent):
 
         if tools:
             payload["tools"] = tools
+        
+        if format:
+            payload["format"] = format
 
         with httpx.Client() as client:
             response = client.post(url, json=payload, timeout=300.0)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            self._extract_usage(result, messages)
+            return result
+
+    def _extract_usage(self, response: dict, messages: list[dict]):
+        """Extract or estimate token usage from Ollama response."""
+        prompt_tokens = response.get("prompt_eval_count", 0)
+        completion_tokens = response.get("eval_count", 0)
+
+        # Estimate prompt tokens if not provided
+        if prompt_tokens == 0:
+            prompt_tokens = estimate_messages_tokens(messages)
+            logger.debug("Estimated prompt tokens", tokens=prompt_tokens)
+        
+        # Estimate completion tokens if not provided
+        if completion_tokens == 0:
+            content = response.get("message", {}).get("content", "")
+            completion_tokens = estimate_tokens(content)
+            logger.debug("Estimated completion tokens", tokens=completion_tokens)
+
+        total_tokens = prompt_tokens + completion_tokens
+        logger.debug("Total tokens usage", total=total_tokens, model=self.model_name)
+
+        if self.model_name not in self.usage_by_model:
+            self.usage_by_model[self.model_name] = TokenUsage()
+        
+        self.usage_by_model[self.model_name].prompt_tokens += prompt_tokens
+        self.usage_by_model[self.model_name].completion_tokens += completion_tokens
+        self.usage_by_model[self.model_name].total_tokens += total_tokens
 
     def receive_context(self, context: str):
         """Receive and store context for the next task."""
@@ -187,18 +141,23 @@ class OllamaAgent(BaseAgent):
         prompt = (
             f"Classify the following goal as 'simple' (one-off action, direct query, or single-step task) "
             f"or 'complex' (multi-step task, requires planning, file modifications, or research). "
-            f"Goal: '{goal}'. Output only the word 'simple' or 'complex'."
+            f"Goal: '{goal}'. "
+            "Output your answer in JSON format: {\"classification\": \"simple\"} or {\"classification\": \"complex\"}."
         )
         
         try:
             response = self._chat_with_tools(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
             )
-            content = response.get("message", {}).get("content", "").strip().lower()
-            if "complex" in content:
+            content = response.get("message", {}).get("content", "").strip()
+            data = json.loads(content)
+            classification = data.get("classification", "simple").lower()
+            if "complex" in classification:
                 return "complex"
             return "simple"
-        except Exception:
+        except Exception as e:
+            logger.error("classification_failed", error=str(e))
             return "simple"
 
     def decompose_goal(self, goal: str) -> list[AgentTask]:
@@ -214,15 +173,12 @@ class OllamaAgent(BaseAgent):
         
         try:
             response = self._chat_with_tools(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
             )
             content = response.get("message", {}).get("content", "")
-            # Try to extract JSON
-            match = re.search(r'\{.*\}', content, re.DOTALL)
-            if match:
-                task_data = json.loads(match.group(0))
-                return [AgentTask(**t) for t in task_data.get("tasks", [])]
-            return []
+            task_data = json.loads(content)
+            return [AgentTask(**t) for t in task_data.get("tasks", [])]
         except Exception as e:
             logger.error("decomposition_failed", error=str(e))
             return []
@@ -230,12 +186,11 @@ class OllamaAgent(BaseAgent):
     def execute_task(
         self,
         task: AgentTask,
-        progress: Optional[object] = None,
+        progress: Optional[Any] = None,
     ) -> AgentResult:
         """Execute a task using Ollama with tool-calling support."""
-        # Start MCP clients if available
-        if self.mcp_clients:
-            asyncio.run(self._start_mcp_clients())
+        self.tool_executor.start()
+        available_tools = self.tool_executor.get_provider_tools("ollama")
 
         try:
             messages = [
@@ -262,7 +217,7 @@ class OllamaAgent(BaseAgent):
                 try:
                     response = self._chat_with_tools(
                         messages=messages,
-                        tools=self.available_tools if self.available_tools else None,
+                        tools=available_tools if available_tools else None,
                     )
                 except Exception as e:
                     logger.error("Ollama API error", error=str(e))
@@ -287,9 +242,9 @@ class OllamaAgent(BaseAgent):
                     for tool_call in tool_calls:
                         func_name = tool_call.get("function", {}).get("name", "unknown")
                         args = tool_call.get("function", {}).get("arguments", {})
-                        history.append(AgentAction(action_type="tool_call", content=func_name, metadata=args))
                         
-                        tool_result = self._call_tool(tool_call)
+                        tool_result, success, action = self.tool_executor.execute(func_name, args)
+                        history.append(action)
                         history.append(AgentAction(action_type="tool_result", content=tool_result))
 
                         messages.append({
@@ -305,6 +260,7 @@ class OllamaAgent(BaseAgent):
                     success=True,
                     output=content,
                     history=history,
+                    usage=self.usage_by_model.get(self.model_name)
                 )
 
             return AgentResult(
@@ -315,9 +271,27 @@ class OllamaAgent(BaseAgent):
             )
 
         finally:
-            # Clean up MCP clients
-            if self.mcp_clients:
-                asyncio.run(self._stop_mcp_clients())
+            self.tool_executor.stop()
+
+    def generate_commit_message(self, result: AgentResult) -> str:
+        """Generates a descriptive commit message based on the task result."""
+        prompt = (
+            f"Generate a concise, descriptive Git commit message for the following task output.\n"
+            f"Task Output: {result.output}\n"
+            f"Verification Output: {result.verification_output}\n"
+            "Output only the commit message in a JSON object: {\"commit_message\": \"...\"}."
+        )
+        
+        try:
+            response = self._chat_with_tools(
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
+            )
+            content = response.get("message", {}).get("content", "").strip()
+            data = json.loads(content)
+            return data.get("commit_message", f"Task {result.task_id} completed")
+        except Exception:
+            return super().generate_commit_message(result)
 
     def review_plan(self, plan: CollaborativePlan, role: AgentRole) -> PlanReview:
         """Review a plan from a specific role perspective."""
@@ -336,31 +310,29 @@ class OllamaAgent(BaseAgent):
 
         try:
             response = self._chat_with_tools(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                format="json"
             )
             content = response.get("message", {}).get("content", "")
+            review_data = json.loads(content)
             
-            # Try to extract JSON
-            match = re.search(r'\{.*\}', content, re.DOTALL)
-            if match:
-                review_data = json.loads(match.group(0))
-                comments = [
-                    ReviewComment(
-                        reviewer_role=role,
-                        comment=c.get("comment", ""),
-                        severity=c.get("severity", "suggestion"),
-                        target_task_id=c.get("target_task_id"),
-                        suggest_changes=c.get("suggested_changes"),
-                    )
-                    for c in review_data.get("comments", [])
-                ]
-                return PlanReview(
-                    original_plan_id=plan.goal,
-                    reviewers=[role],
-                    comments=comments,
-                    approved=review_data.get("approved", False),
-                    confidence_score=float(review_data.get("confidence_score", 0.5)),
+            comments = [
+                ReviewComment(
+                    reviewer_role=role,
+                    comment=c.get("comment", ""),
+                    severity=c.get("severity", "suggestion"),
+                    target_task_id=c.get("target_task_id"),
+                    suggested_changes=c.get("suggested_changes"),
                 )
+                for c in review_data.get("comments", [])
+            ]
+            return PlanReview(
+                original_plan_id=plan.goal,
+                reviewers=[role],
+                comments=comments,
+                approved=review_data.get("approved", False),
+                confidence_score=float(review_data.get("confidence_score", 0.5)),
+            )
         except Exception as e:
             logger.error("review_plan_failed", error=str(e))
 

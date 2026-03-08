@@ -29,7 +29,9 @@ def create_agent(agent_config: AgentConfig, mcp_servers: Optional[List[MCPServer
         return OpenAIAgent(
             model_name=agent_config.model or "gpt-4o", 
             api_key=agent_config.api_key or os.environ.get("OPENAI_API_KEY"),
-            base_url=agent_config.base_url
+            base_url=agent_config.base_url,
+            mcp_servers=mcp_servers,
+            sandbox=agent_config.sandbox
         )
     elif agent_config.provider == "claude":
         return ClaudeAgent(
@@ -41,7 +43,9 @@ def create_agent(agent_config: AgentConfig, mcp_servers: Optional[List[MCPServer
     elif agent_config.provider == "ollama":
         return OllamaAgent(
             model_name=agent_config.model or "llama3",
-            base_url=agent_config.base_url or "http://localhost:11434"
+            base_url=agent_config.base_url or "http://localhost:11434",
+            mcp_servers=mcp_servers,
+            sandbox=agent_config.sandbox
         )
     else:
         raise ValueError(f"Unsupported provider: {agent_config.provider}")

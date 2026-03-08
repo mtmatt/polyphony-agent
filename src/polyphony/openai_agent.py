@@ -1,82 +1,31 @@
 import json
+import os
 from typing import List, Optional, Any
 from pydantic import BaseModel
 from openai import OpenAI
 from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
-from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
-from .utils import write_file, replace_text, run_command
-from .config import MCPServerConfig
-from .mcp_client import MCPClient
 
+from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
+from .tool_executor import ToolExecutor
+from .config import MCPServerConfig
+from .logging import get_logger
+
+logger = get_logger(__name__)
 console = Console()
 
 class Plan(BaseModel):
     tasks: List[AgentTask]
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write or overwrite a file with given content.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file."},
-                    "content": {"type": "string", "description": "Complete file content."}
-                },
-                "required": ["path", "content"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "replace_text",
-            "description": "Surgically replace text in a file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file."},
-                    "old": {"type": "string", "description": "The exact text to find."},
-                    "new": {"type": "string", "description": "The text to replace it with."}
-                },
-                "required": ["path", "old", "new"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_command",
-            "description": "Run a shell command and return the result.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "The command to run."}
-                },
-                "required": ["command"]
-            }
-        }
-    }
-]
-
 class OpenAIAgent(BaseAgent):
-    def __init__(self, model_name: str = "gpt-4o", flash_model_name: Optional[str] = None, base_url: Optional[str] = None, api_key: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None):
+    def __init__(self, model_name: str = "gpt-4o", flash_model_name: Optional[str] = None, base_url: Optional[str] = None, api_key: Optional[str] = None, mcp_servers: Optional[List[MCPServerConfig]] = None, sandbox: bool = False):
         super().__init__()
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = flash_model_name
+        self.sandbox = sandbox
         self.context = ""
-        self.mcp_clients = [MCPClient(cfg) for cfg in (mcp_servers or [])]
-        for client in self.mcp_clients:
-            try:
-                client.start()
-            except Exception as e:
-                console.print(f"[bold red]Error starting MCP server {client.config.command}: {e}[/bold red]")
+        self.tool_executor = ToolExecutor(mcp_servers, sandbox)
 
     @property
     def model_name(self) -> str:
@@ -145,7 +94,7 @@ class OpenAIAgent(BaseAgent):
             return []
 
         except Exception as e:
-            print(f"Error decomposing goal with OpenAI: {e}")
+            logger.error("decomposition_failed", error=str(e))
             return []
 
     def _update_usage(self, response_usage: Any):
@@ -160,6 +109,7 @@ class OpenAIAgent(BaseAgent):
             usage.total_tokens += response_usage.total_tokens
 
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
+        logger.info("openai_agent_executing", task_id=task.id, sandbox=self.sandbox)
         history: List[AgentAction] = []
         total_usage = TokenUsage()
         
@@ -167,40 +117,26 @@ class OpenAIAgent(BaseAgent):
             if progress and callable(progress):
                 progress(p)
 
-        # Dynamic tools list including MCP tools
-        current_tools = list(TOOLS)
-        mcp_tool_map = {} # tool_name -> client
+        self.tool_executor.start()
+        current_tools = self.tool_executor.get_provider_tools("openai")
 
-        for client in self.mcp_clients:
-            try:
-                tools = client.list_tools()
-                for tool in tools:
-                    name = tool.get("name")
-                    mcp_tool_map[name] = client
-                    current_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("inputSchema", {"type": "object", "properties": {}})
-                        }
-                    })
-            except Exception as e:
-                console.print(f"[bold red]Error listing tools from MCP server {client.config.command}: {e}[/bold red]")
+        system_content = (
+            f"You are an expert software engineer. System Context:\n{self.context}\n"
+            "Always verify that your actions were successful. If you write a file, you should run it or check its existence. "
+            "After you have completed all actions and verifications, provide a concise final summary of what you achieved. "
+            "Do not end with trailing thoughts about what you will do next; actually do them or finish."
+        )
+        if self.sandbox:
+            system_content += "\nIMPORTANT: You are running in a SECURE SANDBOX. You may have restricted access to system resources or network."
 
         messages = [
-            {"role": "system", "content": (
-                f"You are an expert software engineer. System Context:\n{self.context}\n"
-                "Always verify that your actions were successful. If you write a file, you should run it or check its existence. "
-                "After you have completed all actions and verifications, provide a concise final summary of what you achieved. "
-                "Do not end with trailing thoughts about what you will do next; actually do them or finish."
-            )},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": f"Task: {task.description}\nAdditional Context: {task.context}"}
         ]
         
         try:
             # Tool calling loop
-            for i in range(10): # Max 10 tool calls per task to accommodate MCP tool flows
+            for i in range(10): # Max 10 tool calls per task
                 update_progress(10 + i*8) # Progress through steps
                 
                 response = self.client.chat.completions.create(
@@ -238,48 +174,9 @@ class OpenAIAgent(BaseAgent):
                     func_name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments)
                     
-                    history.append(AgentAction(action_type="tool_call", content=func_name, metadata=args))
-                    
-                    # Better tool call visualization
-                    if func_name == "write_file":
-                        path = args.get("path")
-                        content = args.get("content", "")
-                        console.print(Panel(Syntax(content, "python", theme="monokai", line_numbers=True), title=f"Writing to {path}", border_style="cyan"))
-                        result = write_file(**args)
-                    elif func_name == "replace_text":
-                        path = args.get("path")
-                        old = args.get("old")
-                        new = args.get("new")
-                        console.print(Panel(f"[bold red]- {old}[/bold red]\n[bold green]+ {new}[/bold green]", title=f"Updating {path}", border_style="yellow"))
-                        result = replace_text(**args)
-                    elif func_name == "run_command":
-                        cmd = args.get("command")
-                        console.print(f"  [dim][tool][/dim] Running: [bold cyan]{cmd}[/bold cyan]")
-                        result = run_command(**args)
-                    elif func_name in mcp_tool_map:
-                        client = mcp_tool_map[func_name]
-                        console.print(f"  [dim][mcp tool][/dim] {func_name} from {client.config.command}")
-                        try:
-                            mcp_result = client.call_tool(func_name, args)
-                            # MCP tool result is usually a list of content blocks
-                            result_content = []
-                            for content_block in mcp_result.get("content", []):
-                                if content_block.get("type") == "text":
-                                    result_content.append(content_block.get("text"))
-                                elif content_block.get("type") == "image":
-                                    result_content.append("[Image data omitted]")
-                            result = "\n".join(result_content) if result_content else "Success"
-                        except Exception as e:
-                            result = f"Error calling MCP tool {func_name}: {e}"
-                    else:
-                        result = f"Error: Unknown tool {func_name}"
-                    
+                    result, success, action = self.tool_executor.execute(func_name, args)
+                    history.append(action)
                     history.append(AgentAction(action_type="tool_result", content=result))
-                    
-                    if "Error" in result:
-                        console.print(f"  [bold red][tool result][/bold red] {result}")
-                    else:
-                        console.print(f"  [dim][tool result][/dim] {result}")
                     
                     messages.append({
                         "role": "tool",
@@ -294,6 +191,8 @@ class OpenAIAgent(BaseAgent):
         except Exception as e:
             update_progress(100)
             return AgentResult(task_id=task.id, success=False, error=str(e), history=history, usage=total_usage)
+        finally:
+            self.tool_executor.stop()
 
     def generate_commit_message(self, result: AgentResult) -> str:
         """

@@ -2,11 +2,10 @@ import subprocess
 import json
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
-from .agent import BaseAgent, AgentTask, AgentResult, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
+from .agent import BaseAgent, AgentTask, AgentResult, AgentAction, TokenUsage, CollaborativePlan, PlanReview, AgentRole, ReviewComment
 from .utils import extract_json
-
+from .tool_executor import ToolExecutor
 from .config import MCPServerConfig
-
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,9 +19,9 @@ class GeminiAgent(BaseAgent):
         self._model_name = model_name
         self._pro_model_name = model_name
         self._flash_model_name = flash_model_name
-        self.context = ""
-        self.mcp_servers = mcp_servers or []
         self.sandbox = sandbox
+        self.context = ""
+
 
     @property
     def model_name(self) -> str:
@@ -83,7 +82,6 @@ class GeminiAgent(BaseAgent):
 
         except subprocess.CalledProcessError as e:
             logger.error("classification_failed_subprocess", stderr=e.stderr, model=self.model_name)
-            # Default to complex if classification fails to be safe
             return "complex"
         except Exception as e:
             logger.error("classification_failed_unknown", error=str(e))
@@ -144,9 +142,7 @@ class GeminiAgent(BaseAgent):
         models = stats.get("models", {})
         model_stats = models.get(self.model_name)
         if not model_stats:
-            # Try to find any model if the name doesn't match exactly
             if models:
-                # Return the one with the most tokens or just the first one
                 model_stats = list(models.values())[0]
         
         if model_stats:
@@ -157,7 +153,6 @@ class GeminiAgent(BaseAgent):
                 total_tokens=tokens.get("total", 0)
             )
             
-            # Update usage by model
             model_name = self.model_name
             if model_name not in self.usage_by_model:
                 self.usage_by_model[model_name] = TokenUsage()
@@ -171,10 +166,10 @@ class GeminiAgent(BaseAgent):
     def execute_task(self, task: AgentTask, progress: Optional[Any] = None) -> AgentResult:
         """
         Calls gemini to perform a specific task, capturing history from stream-json.
+        Note: The gemini CLI handles tool execution internally in YOLO mode (-y).
         """
         logger.info("gemini_agent_executing", task_id=task.id, sandbox=self.sandbox)
         
-        # Formulate a prompt for gemini to perform the task
         prompt = (
             f"Task: {task.description}\n"
             f"Additional Context: {task.context}\n"
@@ -189,6 +184,7 @@ class GeminiAgent(BaseAgent):
         
         try:
             # Call gemini with stream-json output format
+            # We use -y (YOLO) so the CLI handles tools automatically
             cmd = self._get_base_command() + ["-y", "-o", "stream-json", "-p", prompt]
             process = subprocess.Popen(
                 cmd,
@@ -199,7 +195,6 @@ class GeminiAgent(BaseAgent):
             
             total_usage = TokenUsage()
             
-            # Read stdout line by line
             for line in process.stdout:
                 line = line.strip()
                 if not line:
@@ -237,7 +232,6 @@ class GeminiAgent(BaseAgent):
             process.wait()
             
             if process.returncode == 0:
-                # Update usage
                 if self.model_name not in self.usage_by_model:
                     self.usage_by_model[self.model_name] = TokenUsage()
                 
@@ -270,7 +264,6 @@ class GeminiAgent(BaseAgent):
         )
         
         try:
-            # Call gemini with non-interactive mode, json output format, and YOLO mode
             sub_result = subprocess.run(
                 ["gemini", "--model", self.model_name, "-y", "-o", "json", "-p", prompt],
                 stdout=subprocess.PIPE,
@@ -344,7 +337,6 @@ class GeminiAgent(BaseAgent):
         except Exception as e:
             logger.warning("review_plan_failed", role=role.value, error=str(e))
 
-        # Fallback: approve with neutral confidence
         return PlanReview(
             original_plan_id=plan.goal,
             reviewers=[role],
