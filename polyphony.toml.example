@@ -1,0 +1,9 @@
+[roles]
+planner      = { provider = "pi",     model = "openai/gpt-4o" }
+orchestrator = { provider = "claude", model = "claude-opus-4-7" }
+coder        = { provider = "codex",  model = "codex" }
+verifier     = { provider = "pi",     model = "anthropic/claude-sonnet-4-6" }
+
+[run]
+max_retries = 3
+runs_dir    = "runs"
