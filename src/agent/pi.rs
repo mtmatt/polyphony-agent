@@ -21,8 +21,8 @@ impl AgentProvider for PiAgent {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let mut stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
+        let mut stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("failed to get stdin"))?;
+        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("failed to get stdout"))?;
 
         // Reader thread sends lines over channel
         let (tx, rx) = mpsc::channel::<String>();

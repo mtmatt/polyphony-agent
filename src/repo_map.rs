@@ -38,15 +38,20 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut String) -> Result<()> {
 }
 
 fn extract_symbols(path: &Path) -> Vec<String> {
-    let pattern = match path.extension().and_then(|e| e.to_str()) {
-        Some("rs") => r"(?m)^pub (?:fn|struct|enum|trait)\s+(\w+)",
-        Some("ts") | Some("js") => r"(?m)^(?:export )?(?:function|class|const)\s+(\w+)",
-        Some("py") => r"(?m)^(?:def|class)\s+(\w+)",
-        Some("go") => r"(?m)^func\s+(?:\(\w+ \*?\w+\) )?(\w+)",
+    use once_cell::sync::Lazy;
+    static RS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^pub (?:fn|struct|enum|trait)\s+(\w+)").unwrap());
+    static TS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^(?:export )?(?:function|class|const)\s+(\w+)").unwrap());
+    static PY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^(?:def|class)\s+(\w+)").unwrap());
+    static GO_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^func\s+(?:\(\w+ \*?\w+\) )?(\w+)").unwrap());
+
+    let re = match path.extension().and_then(|e| e.to_str()) {
+        Some("rs") => &*RS_RE,
+        Some("ts") | Some("js") => &*TS_RE,
+        Some("py") => &*PY_RE,
+        Some("go") => &*GO_RE,
         _ => return vec![],
     };
     let Ok(src) = std::fs::read_to_string(path) else { return vec![] };
-    let re = Regex::new(pattern).unwrap();
     re.captures_iter(&src)
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
         .take(10)

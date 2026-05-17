@@ -231,10 +231,13 @@ impl Engine {
                 }
 
                 RunState::Failed { reason } => {
+                    let failed_task = reason
+                        .strip_prefix("Task ")
+                        .and_then(|s| s.find(' ').map(|i| s[..i].to_string()));
                     let summary = RunSummary {
                         outcome: "failed".into(),
                         completed_tasks: completed_summaries.clone(),
-                        failed_task: None,
+                        failed_task,
                         reason: Some(reason.clone()),
                     };
                     self.recorder
@@ -251,14 +254,14 @@ impl Engine {
         prompt: &str,
         ctx: &str,
     ) -> Result<String> {
-        let mut last_err = None;
+        let mut last_err = anyhow::anyhow!("{} failed", ctx);
         for _ in 0..self.config.run.max_retries {
             match agent.run(prompt) {
                 Ok(s) => return Ok(s),
-                Err(e) => last_err = Some(e),
+                Err(e) => last_err = e,
             }
         }
-        Err(last_err.unwrap().context(ctx.to_string()))
+        Err(last_err.context(ctx.to_string()))
     }
 
     fn load_clarification_history(&self, turn: u32) -> Result<Vec<(String, String)>> {
