@@ -113,6 +113,7 @@ impl Engine {
                 }
 
                 RunState::Orchestrating => {
+                    self.checkpoint.save(&state)?;
                     let spec = self.recorder.read("spec.md")?;
                     let ctx = ContextBuilder::new(self.project_root.clone());
                     let prompt = ctx.orchestrator_prompt(&spec)?;
@@ -134,6 +135,7 @@ impl Engine {
                 }
 
                 RunState::Coding { task_idx, attempt } => {
+                    self.checkpoint.save(&state)?;
                     if tasks.is_empty() {
                         tasks = load_tasks(&self.recorder)?;
                     }
@@ -170,6 +172,7 @@ impl Engine {
                 }
 
                 RunState::Verifying { task_idx, attempt } => {
+                    self.checkpoint.save(&state)?;
                     if tasks.is_empty() {
                         tasks = load_tasks(&self.recorder)?;
                     }
