@@ -142,3 +142,7 @@ polyphony.toml
 logs/
 polyphony-run-*.md
 .polyphony/
+
+# Added by cargo
+
+/target
