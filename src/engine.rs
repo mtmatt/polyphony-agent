@@ -207,8 +207,9 @@ impl Engine {
                     } else {
                         state = RunState::Failed {
                             reason: format!(
-                                "Task {} failed after {} attempts: {}",
+                                "Task {} ({}) failed after {} attempts: {}",
                                 task.id,
+                                task.title,
                                 attempt + 1,
                                 result.reason
                             ),
