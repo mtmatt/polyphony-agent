@@ -1,12 +1,87 @@
 use crate::agent::AgentProvider;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
 
-pub struct PiAgent { model: String }
-impl PiAgent {
-    pub fn new(model: String) -> Self { Self { model } }
+pub struct PiAgent {
+    model: String,
 }
-impl AgentProvider for PiAgent {
-    fn run(&self, _prompt: &str) -> anyhow::Result<String> {
-        anyhow::bail!("PiAgent not yet implemented")
+
+impl PiAgent {
+    pub fn new(model: String) -> Self {
+        Self { model }
     }
-    fn name(&self) -> &str { "pi" }
+}
+
+impl AgentProvider for PiAgent {
+    fn run(&self, prompt: &str) -> anyhow::Result<String> {
+        let mut child = Command::new("pi")
+            .args(["--mode", "rpc", "--no-session", "--model", &self.model])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+
+        let mut stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+
+        // Reader thread sends lines over channel
+        let (tx, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                match line {
+                    Ok(l) if !l.is_empty() => { let _ = tx.send(l); }
+                    _ => break,
+                }
+            }
+        });
+
+        // Send prompt command
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "id": "req-1", "type": "prompt", "message": prompt
+            }))?
+        )?;
+
+        // Wait for agent_end event
+        for line in &rx {
+            if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&line) {
+                if ev["type"] == "agent_end" {
+                    break;
+                }
+            }
+        }
+
+        // Request final assistant text
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "id": "req-2", "type": "get_last_assistant_text"
+            }))?
+        )?;
+
+        // Read until response for req-2
+        let mut result = String::new();
+        for line in &rx {
+            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                if msg["id"] == "req-2" && msg["type"] == "response" {
+                    result = msg["data"]["text"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    break;
+                }
+            }
+        }
+
+        drop(stdin);
+        child.wait()?;
+        Ok(result)
+    }
+
+    fn name(&self) -> &str {
+        "pi"
+    }
 }
