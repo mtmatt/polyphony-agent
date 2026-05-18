@@ -1,15 +1,17 @@
 use crate::agent::AgentProvider;
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 
 pub struct PiAgent {
     model: String,
+    cwd: PathBuf,
 }
 
 impl PiAgent {
-    pub fn new(model: String) -> Self {
-        Self { model }
+    pub fn new(model: String, cwd: PathBuf) -> Self {
+        Self { model, cwd }
     }
 }
 
@@ -17,6 +19,7 @@ impl AgentProvider for PiAgent {
     fn run(&self, prompt: &str) -> anyhow::Result<String> {
         let mut child = Command::new("pi")
             .args(["--mode", "rpc", "--no-session", "--model", &self.model])
+            .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()?;
@@ -29,8 +32,12 @@ impl AgentProvider for PiAgent {
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 match line {
-                    Ok(l) if !l.is_empty() => { let _ = tx.send(l); }
-                    _ => break,
+                    Ok(l) if !l.is_empty() => {
+                        if tx.send(l).is_err() {
+                            break;
+                        }
+                    }
+                    _ => {}
                 }
             }
         });
@@ -44,11 +51,19 @@ impl AgentProvider for PiAgent {
             }))?
         )?;
 
-        // Wait for agent_end event
+        // Wait for agent_end event; bail on error responses
         for line in &rx {
             if let Ok(ev) = serde_json::from_str::<serde_json::Value>(&line) {
                 if ev["type"] == "agent_end" {
                     break;
+                }
+                // Pi sends {type:"response",success:false} for errors like missing API key
+                if ev["type"] == "response" && ev["success"] == false {
+                    let err = ev["error"].as_str().unwrap_or("unknown pi error");
+                    drop(stdin);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    anyhow::bail!("pi error: {}", err);
                 }
             }
         }

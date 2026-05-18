@@ -29,12 +29,13 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let cfg = Config::load(&cli.config)?;
+    let project_root = std::env::current_dir()?;
 
     let agents = RoleAgents {
-        planner: create_provider(&cfg.roles.planner)?,
-        orchestrator: create_provider(&cfg.roles.orchestrator)?,
-        coder: create_provider(&cfg.roles.coder)?,
-        verifier: create_provider(&cfg.roles.verifier)?,
+        planner: create_provider(&cfg.roles.planner, &project_root)?,
+        orchestrator: create_provider(&cfg.roles.orchestrator, &project_root)?,
+        coder: create_provider(&cfg.roles.coder, &project_root)?,
+        verifier: create_provider(&cfg.roles.verifier, &project_root)?,
     };
 
     let run_dir = match &cli.resume {
@@ -56,8 +57,6 @@ fn main() -> anyhow::Result<()> {
             dir
         }
     };
-
-    let project_root = std::env::current_dir()?;
 
     let mut engine = Engine::new(project_root, run_dir.clone(), cfg, agents)?;
 
